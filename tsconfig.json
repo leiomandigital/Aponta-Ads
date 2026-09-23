@@ -1,0 +1,19 @@
+{
+  // compilerOptions só vale para as funções de /api, que a Vercel compila a partir
+  // deste arquivo (Node ESM, JSX do PDF). Frontend e config do Vite usam os
+  // projetos referenciados abaixo.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true
+  },
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.node.json" }
+  ]
+}

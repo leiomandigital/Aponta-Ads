@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+.claude
+*.tsbuildinfo
+*.timestamp-*.mjs
+apontaads-*.json
+dev-dist
+dist
+node_modules

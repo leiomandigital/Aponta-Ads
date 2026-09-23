@@ -1,0 +1,12 @@
+-- Este arquivo não é a fonte da verdade do schema — ele nunca é editado
+-- diretamente. O schema real é a soma de todos os arquivos numerados em
+-- /database/migrations, aplicados em ordem.
+--
+-- Para recriar o banco do zero (novo projeto Supabase):
+--   1. Abra o SQL Editor do Supabase Studio
+--   2. Execute cada arquivo de /database/migrations, em ordem numérica,
+--      do 001 até o mais recente
+--   3. Nenhuma alteração de schema deve ser feita direto pela UI do
+--      Supabase Studio sem o arquivo de migration correspondente
+--
+-- Ordem atual: 001 a 018 (ver /database/migrations).

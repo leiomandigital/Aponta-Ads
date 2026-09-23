@@ -1,0 +1,35 @@
+# dependencies
+node_modules
+
+# build
+dist
+dist-ssr
+dev-dist
+api-bundled
+*.local
+*.tsbuildinfo
+
+# env
+.env
+.env.local
+.env.*.local
+
+# editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# os
+.DS_Store
+Thumbs.db
+
+# vercel
+.vercel
+
+*.timestamp-*.mjs
