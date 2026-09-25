@@ -3,7 +3,8 @@ import { lerCredenciais, salvarCredenciais } from '../credentialsVault.js';
 export interface GA4Credentials {
   /** Conteúdo completo do arquivo JSON de chave da service account. */
   serviceAccountJson: string;
-  propertyId: string;
+  /** Preenchido pela tela de seleção de ativos, depois da credencial salva — ver AssetSelectionDialog. */
+  propertyId?: string;
   accessToken?: string;
   accessTokenExpiresAt?: string;
 }
@@ -16,8 +17,8 @@ interface ChaveServiceAccount {
 const ESCOPO_GA4 = 'https://www.googleapis.com/auth/analytics.readonly';
 const URL_TOKEN = 'https://oauth2.googleapis.com/token';
 
-export async function obterCredenciais(): Promise<GA4Credentials> {
-  const credenciais = await lerCredenciais<GA4Credentials>('ga4');
+export async function obterCredenciais(integrationId: string): Promise<GA4Credentials> {
+  const credenciais = await lerCredenciais<GA4Credentials>(integrationId);
   if (!credenciais) throw new Error('GA4: credenciais não configuradas');
   return credenciais;
 }
@@ -75,8 +76,8 @@ async function assinarJwt(chave: ChaveServiceAccount): Promise<string> {
   return `${cabecalho}.${corpo}.${base64Url(new Uint8Array(assinatura))}`;
 }
 
-export async function refreshCredentialsIfNeeded(): Promise<void> {
-  const credenciais = await obterCredenciais();
+export async function refreshCredentialsIfNeeded(integrationId: string): Promise<void> {
+  const credenciais = await obterCredenciais(integrationId);
 
   const tokenValido =
     credenciais.accessToken &&
@@ -102,7 +103,7 @@ export async function refreshCredentialsIfNeeded(): Promise<void> {
 
   const dados = (await resposta.json()) as { access_token: string; expires_in: number };
 
-  await salvarCredenciais('ga4', {
+  await salvarCredenciais(integrationId, {
     ...credenciais,
     accessToken: dados.access_token,
     accessTokenExpiresAt: new Date(Date.now() + dados.expires_in * 1000).toISOString(),

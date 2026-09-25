@@ -11,14 +11,14 @@ export interface RDStationCredentials {
   accessTokenExpiresAt?: string;
 }
 
-export async function obterCredenciais(): Promise<RDStationCredentials> {
-  const credenciais = await lerCredenciais<RDStationCredentials>('rd_station');
+export async function obterCredenciais(integrationId: string): Promise<RDStationCredentials> {
+  const credenciais = await lerCredenciais<RDStationCredentials>(integrationId);
   if (!credenciais) throw new Error('RD Station: credenciais não configuradas');
   return credenciais;
 }
 
-export async function refreshCredentialsIfNeeded(): Promise<void> {
-  const credenciais = await obterCredenciais();
+export async function refreshCredentialsIfNeeded(integrationId: string): Promise<void> {
+  const credenciais = await obterCredenciais(integrationId);
 
   const tokenValido =
     credenciais.accessToken &&
@@ -43,7 +43,7 @@ export async function refreshCredentialsIfNeeded(): Promise<void> {
 
   const dados = (await resposta.json()) as { access_token: string; expires_in: number };
 
-  await salvarCredenciais('rd_station', {
+  await salvarCredenciais(integrationId, {
     ...credenciais,
     accessToken: dados.access_token,
     accessTokenExpiresAt: new Date(Date.now() + dados.expires_in * 1000).toISOString(),

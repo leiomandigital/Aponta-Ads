@@ -95,3 +95,39 @@ export function buscarLeads(credenciais: GA4Credentials, sinceDate: string, unti
     filter: { fieldName: 'eventName', stringFilter: { matchType: 'EXACT', value: EVENTO_LEAD } },
   });
 }
+
+interface GA4PropertySummary {
+  property: string; // formato "properties/123456789"
+  displayName: string;
+}
+
+interface GA4AccountSummary {
+  propertySummaries?: GA4PropertySummary[];
+}
+
+/**
+ * Lista as propriedades GA4 visíveis para a service account, via Admin API
+ * (mesmo escopo analytics.readonly já pedido em auth.ts — não exige consentimento
+ * novo). Usada pela tela de seleção de ativos, para trocar o campo de texto
+ * livre de propertyId por um seletor com as propriedades reais.
+ */
+export async function listarPropriedadesDisponiveis(
+  credenciais: GA4Credentials
+): Promise<Array<{ externalId: string; name: string }>> {
+  const resposta = await fetch('https://analyticsadmin.googleapis.com/v1beta/accountSummaries', {
+    headers: { Authorization: `Bearer ${credenciais.accessToken}` },
+  });
+
+  if (!resposta.ok) {
+    throw new Error(`GA4: consulta de propriedades disponíveis falhou (HTTP ${resposta.status})`);
+  }
+
+  const corpo = (await resposta.json()) as { accountSummaries?: GA4AccountSummary[] };
+
+  return (corpo.accountSummaries ?? []).flatMap((conta) =>
+    (conta.propertySummaries ?? []).map((propriedade) => ({
+      externalId: propriedade.property.replace('properties/', ''),
+      name: propriedade.displayName,
+    }))
+  );
+}

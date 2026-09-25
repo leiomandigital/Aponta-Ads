@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { paraDataSaoPaulo } from '../timezone.js';
 import { resolverRegioesDasCampanhas } from '../regionResolver.js';
+import { intervaloDeDatas, linhasParaGravar } from '../diffUpsert.js';
 
 interface MetaInsightRow {
   campaign_id?: string;
@@ -41,7 +42,8 @@ function somarValorAcao(acoes: Array<{ action_type: string; value: string }> | u
 
 export async function normalizarEGravarPerformance(
   supabaseAdmin: SupabaseClient,
-  linhas: MetaInsightRow[]
+  linhas: MetaInsightRow[],
+  accountId: string | null
 ): Promise<number> {
   if (linhas.length === 0) return 0;
 
@@ -64,15 +66,36 @@ export async function normalizarEGravarPerformance(
       cost: Number(linha.spend ?? 0),
       conversions: 0, // conversões vêm da consulta separada por evento
       region: regioes.get(campaignId) ?? null,
+      account_id: accountId,
     };
   });
 
+  const { min, max } = intervaloDeDatas(linhasNormalizadas.map((linha) => linha.date));
+  let consultaExistentes = supabaseAdmin
+    .from('ad_performance_daily')
+    .select('platform, campaign_id, adset_id, ad_id, date, account_id, campaign_name, adset_name, ad_name, impressions, clicks, cost, conversions, region')
+    .eq('platform', 'meta_ads')
+    .gte('date', min)
+    .lte('date', max);
+  consultaExistentes = accountId ? consultaExistentes.eq('account_id', accountId) : consultaExistentes.is('account_id', null);
+
+  const { data: existentes, error: erroExistentes } = await consultaExistentes;
+  if (erroExistentes) throw new Error(erroExistentes.message);
+
+  const paraGravar = linhasParaGravar(
+    linhasNormalizadas,
+    existentes ?? [],
+    ['platform', 'campaign_id', 'adset_id', 'ad_id', 'date', 'account_id'],
+    ['campaign_name', 'adset_name', 'ad_name', 'impressions', 'clicks', 'cost', 'conversions', 'region']
+  );
+  if (paraGravar.length === 0) return 0;
+
   const { error } = await supabaseAdmin
     .from('ad_performance_daily')
-    .upsert(linhasNormalizadas, { onConflict: 'platform,campaign_id,adset_id,ad_id,date' });
+    .upsert(paraGravar, { onConflict: 'platform,campaign_id,adset_id,ad_id,date,account_id' });
 
   if (error) throw new Error(error.message);
-  return linhasNormalizadas.length;
+  return paraGravar.length;
 }
 
 interface ConversaoAcumulada {
@@ -86,11 +109,13 @@ interface ConversaoAcumulada {
   conversions: number;
   conversion_value: number;
   region: 'ES' | 'TO' | null;
+  account_id: string | null;
 }
 
 export async function normalizarEGravarConversoes(
   supabaseAdmin: SupabaseClient,
-  linhas: MetaInsightRow[]
+  linhas: MetaInsightRow[],
+  accountId: string | null
 ): Promise<number> {
   // O campo ad_id não faz parte da granularidade desta tabela (migration 008),
   // mas a consulta usa level:'ad' — mais de um anúncio do mesmo conjunto pode
@@ -128,6 +153,7 @@ export async function normalizarEGravarConversoes(
           conversions: conversoes,
           conversion_value: valor,
           region,
+          account_id: accountId,
         });
       }
     }
@@ -140,49 +166,127 @@ export async function normalizarEGravarConversoes(
 
   if (linhasNormalizadas.length === 0) return 0;
 
+  const { min, max } = intervaloDeDatas(linhasNormalizadas.map((linha) => linha.date));
+  let consultaExistentes = supabaseAdmin
+    .from('ad_conversions_daily')
+    .select('platform, campaign_id, adset_id, conversion_name, date, account_id, campaign_name, adset_name, conversions, conversion_value, region')
+    .eq('platform', 'meta_ads')
+    .gte('date', min)
+    .lte('date', max);
+  consultaExistentes = accountId ? consultaExistentes.eq('account_id', accountId) : consultaExistentes.is('account_id', null);
+
+  const { data: existentes, error: erroExistentes } = await consultaExistentes;
+  if (erroExistentes) throw new Error(erroExistentes.message);
+
+  const paraGravar = linhasParaGravar(
+    linhasNormalizadas,
+    existentes ?? [],
+    ['platform', 'campaign_id', 'adset_id', 'conversion_name', 'date', 'account_id'],
+    ['campaign_name', 'adset_name', 'conversions', 'conversion_value', 'region']
+  );
+  if (paraGravar.length === 0) return 0;
+
   const { error } = await supabaseAdmin
     .from('ad_conversions_daily')
-    .upsert(linhasNormalizadas, { onConflict: 'platform,campaign_id,adset_id,conversion_name,date' });
+    .upsert(paraGravar, { onConflict: 'platform,campaign_id,adset_id,conversion_name,date,account_id' });
 
   if (error) throw new Error(error.message);
-  return linhasNormalizadas.length;
+  return paraGravar.length;
+}
+
+interface DemografiaAcumulada {
+  platform: 'meta_ads';
+  campaign_id: string;
+  date: string;
+  age_range: string | null;
+  gender: string | null;
+  impressions: number;
+  clicks: number;
+  cost: number;
+  region: 'ES' | 'TO' | null;
+  account_id: string | null;
 }
 
 export async function normalizarEGravarDemografia(
   supabaseAdmin: SupabaseClient,
-  linhas: MetaInsightRow[]
+  linhas: MetaInsightRow[],
+  accountId: string | null
 ): Promise<number> {
   if (linhas.length === 0) return 0;
 
   const regioes = await resolverRegioesDasCampanhas(supabaseAdmin, 'meta_ads');
 
-  const linhasNormalizadas = linhas.map((linha) => {
-    const campaignId = linha.campaign_id ?? '';
+  // Mesmo motivo de normalizarEGravarConversoes: a consulta roda em
+  // level:'ad' (buscarInsights sempre usa isso), mas esta tabela não tem
+  // ad_id no grão — mais de um anúncio da mesma campanha cai na mesma chave
+  // aqui. Duas linhas com a mesma chave no mesmo upsert quebram com "ON
+  // CONFLICT DO UPDATE command cannot affect row a second time" — por isso
+  // somamos as duplicatas num mapa antes de gravar.
+  const porChave = new Map<string, DemografiaAcumulada>();
 
-    return {
-      platform: 'meta_ads',
-      campaign_id: campaignId,
-      date: paraDataSaoPaulo(linha.date_start ?? new Date().toISOString()),
-      age_range: linha.age ?? null,
-      gender: linha.gender ?? null,
-      impressions: Number(linha.impressions ?? 0),
-      clicks: Number(linha.inline_link_clicks ?? 0),
-      cost: Number(linha.spend ?? 0),
-      region: regioes.get(campaignId) ?? null,
-    };
-  });
+  for (const linha of linhas) {
+    const campaignId = linha.campaign_id ?? '';
+    const dataFormatada = paraDataSaoPaulo(linha.date_start ?? new Date().toISOString());
+    const ageRange = linha.age ?? null;
+    const gender = linha.gender ?? null;
+    const chave = [campaignId, ageRange, gender, dataFormatada].join('|');
+
+    const existente = porChave.get(chave);
+    if (existente) {
+      existente.impressions += Number(linha.impressions ?? 0);
+      existente.clicks += Number(linha.inline_link_clicks ?? 0);
+      existente.cost += Number(linha.spend ?? 0);
+    } else {
+      porChave.set(chave, {
+        platform: 'meta_ads',
+        campaign_id: campaignId,
+        date: dataFormatada,
+        age_range: ageRange,
+        gender,
+        impressions: Number(linha.impressions ?? 0),
+        clicks: Number(linha.inline_link_clicks ?? 0),
+        cost: Number(linha.spend ?? 0),
+        region: regioes.get(campaignId) ?? null,
+        account_id: accountId,
+      });
+    }
+  }
+
+  const linhasNormalizadas = [...porChave.values()];
+  if (linhasNormalizadas.length === 0) return 0;
+
+  const { min, max } = intervaloDeDatas(linhasNormalizadas.map((linha) => linha.date));
+  let consultaExistentes = supabaseAdmin
+    .from('ad_performance_demographics_daily')
+    .select('platform, campaign_id, age_range, gender, date, account_id, impressions, clicks, cost, region')
+    .eq('platform', 'meta_ads')
+    .gte('date', min)
+    .lte('date', max);
+  consultaExistentes = accountId ? consultaExistentes.eq('account_id', accountId) : consultaExistentes.is('account_id', null);
+
+  const { data: existentes, error: erroExistentes } = await consultaExistentes;
+  if (erroExistentes) throw new Error(erroExistentes.message);
+
+  const paraGravar = linhasParaGravar(
+    linhasNormalizadas,
+    existentes ?? [],
+    ['platform', 'campaign_id', 'age_range', 'gender', 'date', 'account_id'],
+    ['impressions', 'clicks', 'cost', 'region']
+  );
+  if (paraGravar.length === 0) return 0;
 
   const { error } = await supabaseAdmin
     .from('ad_performance_demographics_daily')
-    .upsert(linhasNormalizadas, { onConflict: 'platform,campaign_id,age_range,gender,date' });
+    .upsert(paraGravar, { onConflict: 'platform,campaign_id,age_range,gender,date,account_id' });
 
   if (error) throw new Error(error.message);
-  return linhasNormalizadas.length;
+  return paraGravar.length;
 }
 
 export async function normalizarEGravarVideo(
   supabaseAdmin: SupabaseClient,
-  linhas: MetaInsightRow[]
+  linhas: MetaInsightRow[],
+  accountId: string | null
 ): Promise<number> {
   if (linhas.length === 0) return 0;
 
@@ -197,12 +301,33 @@ export async function normalizarEGravarVideo(
     video_p50: somarValorAcao(linha.video_p50_watched_actions, 'video_view'),
     video_p75: somarValorAcao(linha.video_p75_watched_actions, 'video_view'),
     video_p100: somarValorAcao(linha.video_p100_watched_actions, 'video_view'),
+    account_id: accountId,
   }));
+
+  const { min, max } = intervaloDeDatas(linhasNormalizadas.map((linha) => linha.date));
+  let consultaExistentes = supabaseAdmin
+    .from('ad_video_metrics_daily')
+    .select('platform, campaign_id, ad_id, date, account_id, plays_3s, thruplay, video_p25, video_p50, video_p75, video_p100')
+    .eq('platform', 'meta_ads')
+    .gte('date', min)
+    .lte('date', max);
+  consultaExistentes = accountId ? consultaExistentes.eq('account_id', accountId) : consultaExistentes.is('account_id', null);
+
+  const { data: existentes, error: erroExistentes } = await consultaExistentes;
+  if (erroExistentes) throw new Error(erroExistentes.message);
+
+  const paraGravar = linhasParaGravar(
+    linhasNormalizadas,
+    existentes ?? [],
+    ['platform', 'campaign_id', 'ad_id', 'date', 'account_id'],
+    ['plays_3s', 'thruplay', 'video_p25', 'video_p50', 'video_p75', 'video_p100']
+  );
+  if (paraGravar.length === 0) return 0;
 
   const { error } = await supabaseAdmin
     .from('ad_video_metrics_daily')
-    .upsert(linhasNormalizadas, { onConflict: 'platform,campaign_id,ad_id,date' });
+    .upsert(paraGravar, { onConflict: 'platform,campaign_id,ad_id,date,account_id' });
 
   if (error) throw new Error(error.message);
-  return linhasNormalizadas.length;
+  return paraGravar.length;
 }

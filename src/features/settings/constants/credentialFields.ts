@@ -21,9 +21,11 @@ export const CAMPOS_CREDENCIAL: Record<string, CampoCredencial[]> = {
     { chave: 'appId', rotulo: 'App ID', tipo: 'text', obrigatorio: false },
     { chave: 'appSecret', rotulo: 'App Secret', tipo: 'password', obrigatorio: false },
   ],
+  // propertyId não entra aqui de propósito: depois de salvar a chave da
+  // service account, a tela abre a seleção de ativos (AssetSelectionDialog),
+  // que lista as propriedades reais via API em vez de pedir o ID de cor.
   ga4: [
     { chave: 'serviceAccountJson', rotulo: 'Chave JSON da service account (conteúdo completo do arquivo)', tipo: 'password', obrigatorio: true },
-    { chave: 'propertyId', rotulo: 'Property ID', tipo: 'text', obrigatorio: true },
   ],
   rd_station: [
     { chave: 'clientId', rotulo: 'Client ID', tipo: 'text', obrigatorio: true },

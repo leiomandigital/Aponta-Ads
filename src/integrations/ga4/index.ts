@@ -6,9 +6,16 @@ import { normalizarEGravarSessoes } from './normalize.js';
 
 const mensagemDe = (erro: unknown) => (erro instanceof Error ? erro.message : 'falha desconhecida');
 
-async function sync(options: SyncOptions): Promise<SyncResult> {
+async function sync(integrationId: string, accountId: string | null, options: SyncOptions): Promise<SyncResult> {
   const supabaseAdmin = criarSupabaseAdminClient();
-  const credenciais = await obterCredenciais();
+  const credenciais = await obterCredenciais(integrationId);
+
+  // propertyId só é preenchido depois da etapa de seleção de ativos
+  // (AssetSelectionDialog) — sem ele, não há o que consultar no Data API.
+  if (!credenciais.propertyId) {
+    const mensagem = 'GA4: nenhuma propriedade selecionada — abra a integração e escolha uma propriedade antes de sincronizar.';
+    return { status: 'error', recordsSynced: 0, errorMessage: mensagem, details: { analytics_sessions_daily: `error: ${mensagem}` } };
+  }
 
   try {
     // Sessões e leads são duas chamadas independentes ao GA4 — rodar em
@@ -26,7 +33,7 @@ async function sync(options: SyncOptions): Promise<SyncResult> {
     const linhasLeads = resultadoLeads.ok ? resultadoLeads.linhasLeads : undefined;
     const erroLeads = resultadoLeads.ok ? undefined : resultadoLeads.erro;
 
-    const registrosGravados = await normalizarEGravarSessoes(supabaseAdmin, linhas, linhasLeads);
+    const registrosGravados = await normalizarEGravarSessoes(supabaseAdmin, linhas, accountId, linhasLeads);
 
     if (erroLeads) {
       return {

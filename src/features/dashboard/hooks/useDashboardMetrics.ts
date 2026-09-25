@@ -4,7 +4,7 @@ import type { PaginaLinha } from '../components/TopPagesTable';
 import type { CampanhaLinha } from '../components/CampaignsTable';
 import type { ConjuntoLinha } from '../components/AdSetsTable';
 import type { AnuncioLinha } from '../components/AdsTable';
-import { PERIODOS_DASHBOARD, type AbaDashboard, type PeriodoDashboard, type RegiaoDashboard } from '@/constants/dashboard.constants';
+import { PERIODOS_DASHBOARD, type AbaDashboard, type PeriodoDashboard } from '@/constants/dashboard.constants';
 import {
   agruparCustoPorLeadPorDia,
   agruparMidiaPorChave,
@@ -142,8 +142,19 @@ function comparacaoDeMetricas(atual: AggregatedMetrics, anterior: AggregatedMetr
 export function useDashboardMetrics(
   aba: AbaDashboard,
   periodo: PeriodoDashboard,
-  regiao: RegiaoDashboard,
-  intervaloPersonalizado: IntervaloPersonalizado | null = null
+  /** undefined = "Geral", soma todas as contas ativas (mais as compartilhadas). */
+  accountId: string | undefined,
+  /** Contas desativadas — excluídas da soma "Geral" (ver dashboardService.ts). Irrelevante quando accountId é informado (só contas ativas aparecem pra seleção). */
+  idsContasInativas: string[] = [],
+  intervaloPersonalizado: IntervaloPersonalizado | null = null,
+  /**
+   * false enquanto useAccounts() ainda não carregou (DashboardPage.tsx) —
+   * sem isso, a 1ª busca deste hook roda com idsContasInativas ainda vazio
+   * (porque a lista de contas nem chegou), mostra o valor incluindo a conta
+   * desativada, e só se corrige depois que as contas carregam e o hook busca
+   * de novo — dá exatamente a "piscada" de mostrar e sumir valor.
+   */
+  pronto = true
 ) {
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
@@ -168,7 +179,6 @@ export function useDashboardMetrics(
     () => calcularPeriodoAnterior(dataInicio, dataFim),
     [dataInicio, dataFim]
   );
-  const region: Region | undefined = regiao === 'todas' ? undefined : regiao;
   const platform: Platform | undefined = aba === 'google_ads' || aba === 'meta_ads' ? aba : undefined;
 
   // Trocar de aba muda o universo de campanhas (ou some com a tabela de mídia,
@@ -178,14 +188,16 @@ export function useDashboardMetrics(
   }, [aba]);
 
   const buscar = useCallback(async () => {
+    if (!pronto) return; // espera useAccounts() carregar — ver comentário do parâmetro acima
+
     setCarregando(true);
     setErro(null);
 
     try {
-      const filtrosMidia = { dataInicio, dataFim, region, platform };
-      const filtrosMidiaAnterior = { dataInicio: dataInicioAnterior, dataFim: dataFimAnterior, region, platform };
-      const filtrosAnalytics = { dataInicio, dataFim, region };
-      const filtrosAnalyticsAnterior = { dataInicio: dataInicioAnterior, dataFim: dataFimAnterior, region };
+      const filtrosMidia = { dataInicio, dataFim, platform, accountId, idsContasInativas };
+      const filtrosMidiaAnterior = { dataInicio: dataInicioAnterior, dataFim: dataFimAnterior, platform, accountId, idsContasInativas };
+      const filtrosAnalytics = { dataInicio, dataFim, accountId, idsContasInativas };
+      const filtrosAnalyticsAnterior = { dataInicio: dataInicioAnterior, dataFim: dataFimAnterior, accountId, idsContasInativas };
 
       const buscaAnalytics = aba === 'analytics' || aba === 'geral';
       const buscaMidia = aba !== 'analytics';
@@ -225,9 +237,14 @@ export function useDashboardMetrics(
 
       if (aba === 'geral') {
         const [leads, custo, custoAnterior] = await Promise.all([
-          dashboardService.obterLeadsRecentes({ dataInicio, dataFim, region }),
-          dashboardService.obterCustoPorLeadPorOrigem({ dataInicio, dataFim }),
-          dashboardService.obterCustoPorLeadPorOrigem({ dataInicio: dataInicioAnterior, dataFim: dataFimAnterior }),
+          dashboardService.obterLeadsRecentes({ dataInicio, dataFim, accountId, idsContasInativas }),
+          dashboardService.obterCustoPorLeadPorOrigem({ dataInicio, dataFim, accountId, idsContasInativas }),
+          dashboardService.obterCustoPorLeadPorOrigem({
+            dataInicio: dataInicioAnterior,
+            dataFim: dataFimAnterior,
+            accountId,
+            idsContasInativas,
+          }),
         ]);
         setLeadsRecentes(leads);
         setCustoPorLead(custo);
@@ -242,7 +259,7 @@ export function useDashboardMetrics(
     } finally {
       setCarregando(false);
     }
-  }, [aba, dataInicio, dataFim, dataInicioAnterior, dataFimAnterior, region, platform]);
+  }, [aba, dataInicio, dataFim, dataInicioAnterior, dataFimAnterior, platform, accountId, idsContasInativas, pronto]);
 
   useEffect(() => {
     buscar();

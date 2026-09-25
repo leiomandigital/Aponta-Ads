@@ -10,8 +10,8 @@ export interface GoogleAdsCredentials {
   accessTokenExpiresAt?: string;
 }
 
-export async function obterCredenciais(): Promise<GoogleAdsCredentials> {
-  const credenciais = await lerCredenciais<GoogleAdsCredentials>('google_ads');
+export async function obterCredenciais(integrationId: string): Promise<GoogleAdsCredentials> {
+  const credenciais = await lerCredenciais<GoogleAdsCredentials>(integrationId);
   if (!credenciais) throw new Error('Google Ads: credenciais não configuradas');
   return credenciais;
 }
@@ -21,8 +21,8 @@ export async function obterCredenciais(): Promise<GoogleAdsCredentials> {
  * token de vida limitada do Google Ads pode ter expirado entre um ciclo do
  * cron e o outro, e assumir isso é mais barato que descobrir no meio da chamada.
  */
-export async function refreshCredentialsIfNeeded(): Promise<void> {
-  const credenciais = await obterCredenciais();
+export async function refreshCredentialsIfNeeded(integrationId: string): Promise<void> {
+  const credenciais = await obterCredenciais(integrationId);
 
   const tokenValido =
     credenciais.accessToken &&
@@ -48,7 +48,7 @@ export async function refreshCredentialsIfNeeded(): Promise<void> {
 
   const dados = (await resposta.json()) as { access_token: string; expires_in: number };
 
-  await salvarCredenciais('google_ads', {
+  await salvarCredenciais(integrationId, {
     ...credenciais,
     accessToken: dados.access_token,
     accessTokenExpiresAt: new Date(Date.now() + dados.expires_in * 1000).toISOString(),

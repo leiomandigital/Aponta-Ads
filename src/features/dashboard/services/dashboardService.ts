@@ -1,15 +1,35 @@
 import { supabase } from '@/lib/supabaseClient';
 import { agruparAnalyticsPorDia } from '@/utils/metricsAggregation';
-import type { LeadCostDaily, Platform, Region } from '@/types/database.types';
+import type { LeadCostDaily, Platform } from '@/types/database.types';
 
 export interface FiltrosDashboard {
   dataInicio: string;
   dataFim: string;
   platform?: Platform;
-  region?: Region;
+  /** undefined = "Geral" (soma as contas ativas + as compartilhadas). */
+  accountId?: string;
+  /** Contas desativadas — só é usado quando accountId é undefined (visão "Geral"); numa conta específica ela já não aparece pra ser selecionada. */
+  idsContasInativas?: string[];
 }
 
 const LIMITE_PRINCIPAIS_PAGINAS = 10;
+
+/**
+ * Uma conta específica precisa enxergar tanto as próprias linhas quanto as de
+ * qualquer integração COMPARTILHADA (account_id nulo) — um .eq() simples
+ * esconderia o dado de uma integração única das visões por conta.
+ *
+ * accountId undefined é "Geral": soma tudo, MAS excluindo o que pertence a
+ * uma conta desativada (ela não deve entrar em somatória nenhuma — só
+ * continua existindo no banco). account_id nulo (compartilhado) nunca é
+ * excluído aqui: desativar a conta que originalmente compartilhou uma
+ * integração não deve tirar o dado das demais contas ainda ativas.
+ */
+function filtroDeConta(accountId: string | undefined, idsContasInativas: string[] = []): string | null {
+  if (accountId) return `account_id.eq.${accountId},account_id.is.null`;
+  if (idsContasInativas.length > 0) return `account_id.is.null,account_id.not.in.(${idsContasInativas.join(',')})`;
+  return null;
+}
 
 async function buscarSessoesBrutas(filtros: FiltrosDashboard) {
   let consulta = supabase
@@ -18,7 +38,8 @@ async function buscarSessoesBrutas(filtros: FiltrosDashboard) {
     .gte('date', filtros.dataInicio)
     .lte('date', filtros.dataFim);
 
-  if (filtros.region) consulta = consulta.eq('region', filtros.region);
+  const filtroConta = filtroDeConta(filtros.accountId, filtros.idsContasInativas);
+  if (filtroConta) consulta = consulta.or(filtroConta);
 
   const { data, error } = await consulta;
   if (error) throw new Error(error.message);
@@ -40,7 +61,8 @@ export const dashboardService = {
       .lte('date', filtros.dataFim);
 
     if (filtros.platform) consulta = consulta.eq('platform', filtros.platform);
-    if (filtros.region) consulta = consulta.eq('region', filtros.region);
+    const filtroContaMidia = filtroDeConta(filtros.accountId, filtros.idsContasInativas);
+    if (filtroContaMidia) consulta = consulta.or(filtroContaMidia);
 
     const { data, error } = await consulta;
     if (error) throw new Error(error.message);
@@ -67,7 +89,7 @@ export const dashboardService = {
     return agruparAnalyticsPorDia(linhas);
   },
 
-  async obterPrincipaisPaginas(filtros: Pick<FiltrosDashboard, 'dataInicio' | 'dataFim' | 'region'>) {
+  async obterPrincipaisPaginas(filtros: Pick<FiltrosDashboard, 'dataInicio' | 'dataFim' | 'accountId' | 'idsContasInativas'>) {
     const linhas = await buscarSessoesBrutas(filtros);
     const sessoesPorPagina = new Map<string, number>();
 
@@ -82,7 +104,7 @@ export const dashboardService = {
       .slice(0, LIMITE_PRINCIPAIS_PAGINAS);
   },
 
-  async obterLeadsRecentes(filtros: Pick<FiltrosDashboard, 'dataInicio' | 'dataFim' | 'region'>) {
+  async obterLeadsRecentes(filtros: Pick<FiltrosDashboard, 'dataInicio' | 'dataFim' | 'accountId' | 'idsContasInativas'>) {
     let consulta = supabase
       .from('leads')
       .select('id, name, email, source, funnel_stage, region, captured_at')
@@ -91,21 +113,28 @@ export const dashboardService = {
       .order('captured_at', { ascending: false })
       .limit(50);
 
-    if (filtros.region) consulta = consulta.eq('region', filtros.region);
+    const filtroContaLeads = filtroDeConta(filtros.accountId, filtros.idsContasInativas);
+    if (filtroContaLeads) consulta = consulta.or(filtroContaLeads);
 
     const { data, error } = await consulta;
     if (error) throw new Error(error.message);
     return data ?? [];
   },
 
-  async obterCustoPorLeadPorOrigem(filtros: Pick<FiltrosDashboard, 'dataInicio' | 'dataFim'>): Promise<LeadCostDaily[]> {
-    const { data, error } = await supabase
+  async obterCustoPorLeadPorOrigem(
+    filtros: Pick<FiltrosDashboard, 'dataInicio' | 'dataFim' | 'accountId' | 'idsContasInativas'>
+  ): Promise<LeadCostDaily[]> {
+    let consulta = supabase
       .from('vw_lead_cost_daily')
       .select('*')
       .gte('date', filtros.dataInicio)
       .lte('date', filtros.dataFim)
       .order('date', { ascending: false });
 
+    const filtroContaCusto = filtroDeConta(filtros.accountId, filtros.idsContasInativas);
+    if (filtroContaCusto) consulta = consulta.or(filtroContaCusto);
+
+    const { data, error } = await consulta;
     if (error) throw new Error(error.message);
     return data ?? [];
   },

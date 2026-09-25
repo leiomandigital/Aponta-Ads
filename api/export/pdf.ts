@@ -13,7 +13,7 @@ import {
   buscarSerieTemporalMidiaPaga,
   buscarSessoesPorPagina,
 } from '../_lib/reportData.js';
-import type { Platform, Region } from '../../src/types/database.types.js';
+import type { Platform } from '../../src/types/database.types.js';
 
 const ABAS_VALIDAS = ['geral', 'google_ads', 'meta_ads', 'analytics'];
 
@@ -29,21 +29,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(401).json({ error: 'Não autenticado' });
   }
 
-  const { aba, region, dataInicio, dataFim } = req.body ?? {};
+  const { aba, accountId, accountName, dataInicio, dataFim } = req.body ?? {};
 
   if (!ABAS_VALIDAS.includes(aba) || !dataInicio || !dataFim) {
     return res.status(400).json({ error: 'Parâmetros de exportação inválidos' });
   }
 
-  const regiaoFiltro: Region | undefined = region === 'ES' || region === 'TO' ? region : undefined;
+  const accountIdFiltro: string | undefined = typeof accountId === 'string' ? accountId : undefined;
   const platformFiltro: Platform | undefined = aba === 'google_ads' || aba === 'meta_ads' ? aba : undefined;
 
   try {
     const supabaseAdmin = criarSupabaseAdminClient();
     const configuracoes = await buscarConfiguracoesDeMarca(supabaseAdmin);
 
-    const filtrosMidia = { dataInicio, dataFim, region: regiaoFiltro, platform: platformFiltro };
-    const filtrosAnalytics = { dataInicio, dataFim, region: regiaoFiltro };
+    // Calculado aqui, nunca recebido do cliente: o PDF "Geral" precisa somar
+    // só as contas ativas (mais as compartilhadas) — igual ao dashboard. Só
+    // busca quando faz diferença (accountId não informado = relatório "Geral").
+    let idsContasInativas: string[] = [];
+    if (!accountIdFiltro) {
+      const { data: contasInativas, error: erroContas } = await supabaseAdmin.from('accounts').select('id').eq('is_active', false);
+      if (erroContas) throw new Error(erroContas.message);
+      idsContasInativas = (contasInativas ?? []).map((conta) => conta.id as string);
+    }
+
+    const filtrosMidia = { dataInicio, dataFim, accountId: accountIdFiltro, platform: platformFiltro, idsContasInativas };
+    const filtrosAnalytics = { dataInicio, dataFim, accountId: accountIdFiltro, idsContasInativas };
     const incluiMidia = aba !== 'analytics';
     const incluiAnalytics = aba === 'analytics' || aba === 'geral';
 
@@ -58,7 +68,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ] = await Promise.all([
       incluiMidia ? buscarMetricasDeMidiaPaga(supabaseAdmin, filtrosMidia) : Promise.resolve(null),
       incluiAnalytics ? buscarMetricasAnalytics(supabaseAdmin, filtrosAnalytics) : Promise.resolve(null),
-      aba === 'geral' ? buscarCustoPorLeadPorOrigem(supabaseAdmin, { dataInicio, dataFim }) : Promise.resolve(undefined),
+      aba === 'geral'
+        ? buscarCustoPorLeadPorOrigem(supabaseAdmin, { dataInicio, dataFim, accountId: accountIdFiltro, idsContasInativas })
+        : Promise.resolve(undefined),
       incluiMidia ? buscarCampanhas(supabaseAdmin, filtrosMidia) : Promise.resolve(undefined),
       incluiMidia ? buscarSerieTemporalMidiaPaga(supabaseAdmin, filtrosMidia) : Promise.resolve(undefined),
       incluiAnalytics ? buscarSerieTemporalAnalytics(supabaseAdmin, filtrosAnalytics) : Promise.resolve(undefined),
@@ -68,7 +80,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const buffer = await renderToBuffer(
       ReportDocument({
         aba,
-        regiao: region,
+        conta: typeof accountName === 'string' && accountName ? accountName : 'Geral (todas as contas)',
         dataInicio,
         dataFim,
         logoUrl: configuracoes?.client_logo_url,

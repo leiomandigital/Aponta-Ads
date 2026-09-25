@@ -8,8 +8,8 @@ export interface MetaAdsCredentials {
   accessTokenExpiresAt?: string;
 }
 
-export async function obterCredenciais(): Promise<MetaAdsCredentials> {
-  const credenciais = await lerCredenciais<MetaAdsCredentials>('meta_ads');
+export async function obterCredenciais(integrationId: string): Promise<MetaAdsCredentials> {
+  const credenciais = await lerCredenciais<MetaAdsCredentials>(integrationId);
   if (!credenciais) throw new Error('Meta Ads: credenciais não configuradas');
   return credenciais;
 }
@@ -24,8 +24,8 @@ export async function obterCredenciais(): Promise<MetaAdsCredentials> {
  * ainda válido" (acabou de ser colado pelo usuário), nunca como "precisa
  * renovar agora": só tentamos renovar quando SABEMOS que já venceu.
  */
-export async function refreshCredentialsIfNeeded(): Promise<void> {
-  const credenciais = await obterCredenciais();
+export async function refreshCredentialsIfNeeded(integrationId: string): Promise<void> {
+  const credenciais = await obterCredenciais(integrationId);
 
   const tokenExpirado =
     !!credenciais.accessTokenExpiresAt && new Date(credenciais.accessTokenExpiresAt) <= new Date();
@@ -67,7 +67,7 @@ export async function refreshCredentialsIfNeeded(): Promise<void> {
   // a troca sem expires_in nesse caso. Sem essa informação, não fixamos uma
   // validade (accessTokenExpiresAt some): a próxima sincronização volta a
   // tratar o token como válido, em vez de gerar uma data inválida.
-  await salvarCredenciais('meta_ads', {
+  await salvarCredenciais(integrationId, {
     ...credenciais,
     accessToken: dados.access_token,
     accessTokenExpiresAt: dados.expires_in ? new Date(Date.now() + dados.expires_in * 1000).toISOString() : undefined,

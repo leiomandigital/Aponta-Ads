@@ -24,7 +24,17 @@ export interface SyncResult {
 
 export interface IntegrationConnector {
   key: IntegrationKey;
-  /** Renova o token OAuth2 se estiver perto de expirar. Roda sempre antes de sync(). */
-  refreshCredentialsIfNeeded(): Promise<void>;
-  sync(options: SyncOptions): Promise<SyncResult>;
+  /**
+   * Renova o token OAuth2 se estiver perto de expirar. Roda sempre antes de
+   * sync(). integrationId identifica a LINHA de `integrations` (não a
+   * plataforma) — desde que uma key pode ter várias contas conectadas, é o
+   * id que diz qual credencial ler/gravar no vault.
+   */
+  refreshCredentialsIfNeeded(integrationId: string): Promise<void>;
+  /**
+   * accountId é a conta dona desta integração (null quando a integração é
+   * compartilhada) — repassado para carimbar account_id em cada linha
+   * gravada pelo normalize.ts do conector.
+   */
+  sync(integrationId: string, accountId: string | null, options: SyncOptions): Promise<SyncResult>;
 }

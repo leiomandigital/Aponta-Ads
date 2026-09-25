@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { linhasParaGravar } from '../diffUpsert.js';
 
 interface RDStationConversion {
   uuid: string;
@@ -27,7 +28,8 @@ function resolverSource(utmSource: string | undefined): string | null {
 
 export async function normalizarEGravarLeads(
   supabaseAdmin: SupabaseClient,
-  conversoes: RDStationConversion[]
+  conversoes: RDStationConversion[],
+  accountId: string | null
 ): Promise<number> {
   if (conversoes.length === 0) return 0;
 
@@ -43,12 +45,32 @@ export async function normalizarEGravarLeads(
     // Região depende de UTM de campanha padronizado cruzado com
     // campaign_region_map (trabalho ainda em andamento) — fica null por ora.
     region: null,
+    account_id: accountId,
   }));
 
-  const { error } = await supabaseAdmin
+  // external_id já é o UUID que o próprio RD Station atribui ao lead — único
+  // globalmente, então filtrar direto por ele é mais simples e preciso do que
+  // recortar por intervalo de data (usado nas outras tabelas, que não têm um
+  // identificador tão direto pra comparar).
+  const { data: existentes, error: erroExistentes } = await supabaseAdmin
     .from('leads')
-    .upsert(linhasNormalizadas, { onConflict: 'source,external_id' });
+    .select('source, external_id, name, email, funnel_stage, captured_at, region, account_id')
+    .in(
+      'external_id',
+      linhasNormalizadas.map((linha) => linha.external_id)
+    );
+  if (erroExistentes) throw new Error(erroExistentes.message);
+
+  const paraGravar = linhasParaGravar(
+    linhasNormalizadas,
+    existentes ?? [],
+    ['source', 'external_id'],
+    ['name', 'email', 'funnel_stage', 'captured_at', 'region', 'account_id']
+  );
+  if (paraGravar.length === 0) return 0;
+
+  const { error } = await supabaseAdmin.from('leads').upsert(paraGravar, { onConflict: 'source,external_id' });
 
   if (error) throw new Error(error.message);
-  return linhasNormalizadas.length;
+  return paraGravar.length;
 }

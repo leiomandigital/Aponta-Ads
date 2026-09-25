@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { paraDataSaoPaulo } from '../timezone.js';
+import { intervaloDeDatas, linhasParaGravar } from '../diffUpsert.js';
 import type { GA4Row } from './fetch.js';
 
 // Ordem fixa das dimensões pedidas em fetch.ts: date, pagePath, deviceCategory, sessionDefaultChannelGroup
@@ -12,7 +13,8 @@ const INDICE_SESSIONS = 0;
 const INDICE_USERS = 1;
 const INDICE_EVENT_COUNT = 0; // consulta de leads tem uma única métrica
 
-const COLUNAS_CONFLITO = 'date,page_path,device,age_range,gender,traffic_type';
+const COLUNAS_CONFLITO = 'date,page_path,device,age_range,gender,traffic_type,account_id';
+const COLUNAS_CHAVE = ['date', 'page_path', 'device', 'age_range', 'gender', 'traffic_type', 'account_id'];
 
 function normalizarDimensoes(dimensoes: GA4Row['dimensionValues']) {
   // GA4 devolve a data como YYYYMMDD, já na configuração de fuso da própria propriedade —
@@ -42,6 +44,7 @@ const chaveDe = (d: Dimensoes) => [d.date, d.page_path, d.device, d.traffic_type
 export async function normalizarEGravarSessoes(
   supabaseAdmin: SupabaseClient,
   linhas: GA4Row[],
+  accountId: string | null,
   linhasLeads?: GA4Row[]
 ): Promise<number> {
   if (linhas.length === 0 && !linhasLeads?.length) return 0;
@@ -69,28 +72,55 @@ export async function normalizarEGravarSessoes(
       // operacional do Sam, ainda em andamento) — fica null até essa estruturação
       // estar concluída. Ver Arquitetura, seção 5, migration 015.
       region: null,
+      account_id: accountId,
     };
   });
-
-  if (linhasNormalizadas.length > 0) {
-    const { error } = await supabaseAdmin
-      .from('analytics_sessions_daily')
-      .upsert(linhasNormalizadas, { onConflict: COLUNAS_CONFLITO });
-    if (error) throw new Error(error.message);
-  }
 
   // Lead sem linha de sessão correspondente: grava só a coluna `leads`, para não
   // sobrescrever sessions/users de uma linha que já exista com zero.
   const linhasSoDeLeads = [...leadsPorChave.entries()]
     .filter(([chave]) => !chavesComSessao.has(chave))
-    .map(([, { dimensoes, leads }]) => ({ ...dimensoes, leads }));
+    .map(([, { dimensoes, leads }]) => ({ ...dimensoes, leads, region: null, account_id: accountId }));
 
-  if (linhasSoDeLeads.length > 0) {
-    const { error } = await supabaseAdmin
-      .from('analytics_sessions_daily')
-      .upsert(linhasSoDeLeads, { onConflict: COLUNAS_CONFLITO });
-    if (error) throw new Error(error.message);
+  const todasAsDatas = [...linhasNormalizadas, ...linhasSoDeLeads].map((linha) => linha.date);
+  if (todasAsDatas.length === 0) return 0;
+
+  const { min, max } = intervaloDeDatas(todasAsDatas);
+  let consultaExistentes = supabaseAdmin
+    .from('analytics_sessions_daily')
+    .select('date, page_path, device, age_range, gender, traffic_type, account_id, sessions, users, leads, region')
+    .gte('date', min)
+    .lte('date', max);
+  consultaExistentes = accountId ? consultaExistentes.eq('account_id', accountId) : consultaExistentes.is('account_id', null);
+
+  const { data: existentes, error: erroExistentes } = await consultaExistentes;
+  if (erroExistentes) throw new Error(erroExistentes.message);
+
+  let totalGravado = 0;
+
+  if (linhasNormalizadas.length > 0) {
+    // leads só entra na comparação quando a linha de fato carrega essa coluna
+    // (linhasLeads informado) — senão toda linha pareceria "diferente" da
+    // existente por causa de um campo que nem foi buscado desta vez.
+    const colunasValor = linhasLeads ? ['sessions', 'users', 'leads', 'region'] : ['sessions', 'users', 'region'];
+    const paraGravar = linhasParaGravar(linhasNormalizadas, existentes ?? [], COLUNAS_CHAVE, colunasValor);
+
+    if (paraGravar.length > 0) {
+      const { error } = await supabaseAdmin.from('analytics_sessions_daily').upsert(paraGravar, { onConflict: COLUNAS_CONFLITO });
+      if (error) throw new Error(error.message);
+    }
+    totalGravado += paraGravar.length;
   }
 
-  return linhasNormalizadas.length + linhasSoDeLeads.length;
+  if (linhasSoDeLeads.length > 0) {
+    const paraGravar = linhasParaGravar(linhasSoDeLeads, existentes ?? [], COLUNAS_CHAVE, ['leads', 'region']);
+
+    if (paraGravar.length > 0) {
+      const { error } = await supabaseAdmin.from('analytics_sessions_daily').upsert(paraGravar, { onConflict: COLUNAS_CONFLITO });
+      if (error) throw new Error(error.message);
+    }
+    totalGravado += paraGravar.length;
+  }
+
+  return totalGravado;
 }

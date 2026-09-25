@@ -4,14 +4,23 @@ import { obterCredenciais, refreshCredentialsIfNeeded } from './auth.js';
 import { buscarPerformance, buscarConversoesNomeadas, buscarPalavrasChave } from './fetch.js';
 import { normalizarEGravarPerformance, normalizarEGravarConversoes, normalizarEGravarPalavrasChave } from './normalize.js';
 
-async function sync(options: SyncOptions): Promise<SyncResult> {
+async function sync(integrationId: string, accountId: string | null, options: SyncOptions): Promise<SyncResult> {
   const supabaseAdmin = criarSupabaseAdminClient();
-  const credenciais = await obterCredenciais();
+  const credenciais = await obterCredenciais(integrationId);
 
   const subBuscas: Array<[string, () => Promise<number>]> = [
-    ['ad_performance_daily', async () => normalizarEGravarPerformance(supabaseAdmin, await buscarPerformance(credenciais, options.sinceDate, options.untilDate))],
-    ['ad_conversions_daily', async () => normalizarEGravarConversoes(supabaseAdmin, await buscarConversoesNomeadas(credenciais, options.sinceDate, options.untilDate))],
-    ['ad_keyword_performance_daily', async () => normalizarEGravarPalavrasChave(supabaseAdmin, await buscarPalavrasChave(credenciais, options.sinceDate, options.untilDate))],
+    [
+      'ad_performance_daily',
+      async () => normalizarEGravarPerformance(supabaseAdmin, await buscarPerformance(credenciais, options.sinceDate, options.untilDate), accountId),
+    ],
+    [
+      'ad_conversions_daily',
+      async () => normalizarEGravarConversoes(supabaseAdmin, await buscarConversoesNomeadas(credenciais, options.sinceDate, options.untilDate), accountId),
+    ],
+    [
+      'ad_keyword_performance_daily',
+      async () => normalizarEGravarPalavrasChave(supabaseAdmin, await buscarPalavrasChave(credenciais, options.sinceDate, options.untilDate), accountId),
+    ],
   ];
 
   // Mesmo motivo do Meta Ads: 3 consultas GAQL independentes — rodar em

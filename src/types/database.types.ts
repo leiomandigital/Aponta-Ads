@@ -1,14 +1,36 @@
 export type Platform = 'google_ads' | 'meta_ads';
 export type Region = 'ES' | 'TO';
 export type IntegrationStatus = 'connected' | 'error' | 'pending' | 'disconnected';
+export type IntegrationKey = 'google_ads' | 'ga4' | 'meta_ads' | 'rd_station';
+
+export interface Account {
+  id: string;
+  name: string;
+  is_default: boolean;
+  /** false = desativada: some do seletor do dashboard e de qualquer soma/relatório "Geral". Sem exclusão física de conta. */
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface Integration {
   id: string;
-  key: 'google_ads' | 'ga4' | 'meta_ads' | 'rd_station';
+  key: IntegrationKey;
   name: string;
   is_active: boolean;
   status: IntegrationStatus;
   last_synced_at: string | null;
+  /** null = integração compartilhada ("única"), usada por qualquer conta. */
+  account_id: string | null;
+  /** Conta que marcou como compartilhada — só ela pode desmarcar. null quando account_id não é nulo. */
+  shared_from_account_id: string | null;
+}
+
+export interface IntegrationSelectedAsset {
+  id: string;
+  integration_id: string;
+  external_id: string;
+  name: string | null;
 }
 
 export interface AdPerformanceDaily {
@@ -26,6 +48,7 @@ export interface AdPerformanceDaily {
   cost: number;
   conversions: number;
   region: Region | null;
+  account_id: string | null;
 }
 
 export interface AnalyticsSessionsDaily {
@@ -41,6 +64,7 @@ export interface AnalyticsSessionsDaily {
   gender: string | null;
   traffic_type: string | null;
   region: Region | null;
+  account_id: string | null;
 }
 
 export interface Lead {
@@ -52,39 +76,37 @@ export interface Lead {
   region: Region | null;
   captured_at: string | null;
   created_at: string;
+  account_id: string | null;
 }
 
 export interface LeadCostDaily {
   date: string;
   source: string | null;
+  account_id: string | null;
   leads_count: number;
   total_cost: number;
   cost_per_lead: number | null;
 }
 
-export interface CampaignRegionMap {
-  id: string;
-  platform: string;
-  campaign_id: string;
-  campaign_name: string | null;
-  region: Region;
-}
-
 export interface DashboardSettings {
   id: string;
   client_logo_url: string | null;
-  brand_primary_color: string | null;
 }
 
 export interface SyncLog {
   id: string;
   integration_key: string;
+  integration_id: string | null;
   started_at: string;
   finished_at: string | null;
   status: 'success' | 'error' | 'partial';
   records_synced: number;
   error_message: string | null;
   details: Record<string, string> | null;
+  since_date: string | null;
+  until_date: string | null;
+  /** Igual em todas as etapas de um mesmo clique manual (backfill dividido em várias chamadas) — nulo na automática, que nunca precisa disso. */
+  run_id: string | null;
 }
 
 export interface AggregatedMetrics {

@@ -2,7 +2,10 @@ import { supabase } from '@/lib/supabaseClient';
 
 export interface ParametrosExportacaoPdf {
   aba: string;
-  region: string;
+  /** undefined = "Geral" (todas as contas). */
+  accountId?: string;
+  /** Só para exibição no diálogo/cabeçalho do PDF — o filtro de verdade é accountId. */
+  accountName?: string;
   dataInicio: string;
   dataFim: string;
 }

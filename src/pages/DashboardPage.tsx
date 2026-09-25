@@ -1,12 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import { AppLayout } from '@/components/shared/AppLayout';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { ABAS_DASHBOARD, REGIOES_DASHBOARD, type AbaDashboard, type PeriodoDashboard, type RegiaoDashboard } from '@/constants/dashboard.constants';
+import { ABAS_DASHBOARD, type AbaDashboard, type PeriodoDashboard } from '@/constants/dashboard.constants';
 import { useDashboardMetrics, type IntervaloPersonalizado } from '@/features/dashboard/hooks/useDashboardMetrics';
-import { useIntegrations } from '@/features/settings/hooks/useIntegrations';
+import { useGlobalSyncStatus } from '@/features/settings/hooks/useGlobalSyncStatus';
+import { useAccounts } from '@/features/settings/hooks/useAccounts';
 import { SectionCards } from '@/features/dashboard/components/SectionCards';
 import { ChartAreaInteractive, type SerieDoGrafico } from '@/features/dashboard/components/ChartAreaInteractive';
 import { CampaignsTable } from '@/features/dashboard/components/CampaignsTable';
@@ -19,11 +20,35 @@ import { ExportPdfButton } from '@/features/export/components/ExportPdfButton';
 import { SyncAllButton } from '@/features/dashboard/components/SyncAllButton';
 import { formatarMoeda, formatarNumero } from '@/utils/formatters';
 
+// Sentinela só do valor do <Select> — o Radix Select não aceita null como
+// value. O estado de verdade (contaId) usa null para "Geral", igual ao
+// account_id nulo de uma integração compartilhada no banco.
+const SENTINELA_CONTA_GERAL = 'geral';
+
 export function DashboardPage() {
   const [aba, setAba] = useState<AbaDashboard>('geral');
   const [periodo, setPeriodo] = useState<PeriodoDashboard>('30d');
   const [intervaloPersonalizado, setIntervaloPersonalizado] = useState<IntervaloPersonalizado | null>(null);
-  const [regiao, setRegiao] = useState<RegiaoDashboard>('todas');
+  const [contaId, setContaId] = useState<string | null>(null);
+
+  const { accounts, carregando: carregandoContas } = useAccounts();
+  // Conta desativada não aparece aqui pra seleção — some do dashboard, mas
+  // continua existindo e gerenciável em Configurações (ver AccountsSection).
+  const contasAtivas = useMemo(() => accounts.filter((conta) => conta.is_active), [accounts]);
+  const idsContasInativas = useMemo(
+    () => accounts.filter((conta) => !conta.is_active).map((conta) => conta.id),
+    [accounts]
+  );
+  const contaSelecionada = contasAtivas.find((conta) => conta.id === contaId);
+
+  // Se a conta selecionada for desativada enquanto o dashboard está aberto
+  // (ou já vier desativada de uma sessão anterior), volta pra "Geral" em vez
+  // de continuar filtrando por uma conta que não deveria mais ser filtrável.
+  useEffect(() => {
+    if (contaId && !contasAtivas.some((conta) => conta.id === contaId)) {
+      setContaId(null);
+    }
+  }, [contaId, contasAtivas]);
 
   const {
     algumaIntegracaoAtiva,
@@ -31,7 +56,7 @@ export function DashboardPage() {
     erro: erroIntegracoes,
     sincronizandoTodas,
     sincronizarTodas,
-  } = useIntegrations();
+  } = useGlobalSyncStatus();
 
   const {
     carregando,
@@ -59,7 +84,7 @@ export function DashboardPage() {
     dataInicio,
     dataFim,
     recarregar,
-  } = useDashboardMetrics(aba, periodo, regiao, intervaloPersonalizado);
+  } = useDashboardMetrics(aba, periodo, contaId ?? undefined, idsContasInativas, intervaloPersonalizado, !carregandoContas);
 
   const semIntegracaoConectada = !carregandoIntegracoes && !algumaIntegracaoAtiva;
   const mensagemVazio = semIntegracaoConectada
@@ -70,7 +95,7 @@ export function DashboardPage() {
     try {
       await sincronizarTodas();
     } catch {
-      // erro já fica disponível via useIntegrations().erro — sem tratamento extra aqui
+      // erro já fica disponível via useGlobalSyncStatus().erro — sem tratamento extra aqui
     } finally {
       await recarregar();
     }
@@ -123,20 +148,26 @@ export function DashboardPage() {
               aoClicar={handleSincronizarTudo}
             />
 
-            <ExportPdfButton parametros={{ aba, region: regiao, dataInicio, dataFim }} />
+            <ExportPdfButton parametros={{ aba, accountId: contaId ?? undefined, accountName: contaSelecionada?.name, dataInicio, dataFim }} />
 
-            <Select value={regiao} onValueChange={(valor) => setRegiao(valor as RegiaoDashboard)}>
-              <SelectTrigger className="w-[140px] sm:w-[180px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {REGIOES_DASHBOARD.map((item) => (
-                  <SelectItem key={item.valor} value={item.valor}>
-                    {item.rotulo}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {contasAtivas.length > 1 && (
+              <Select
+                value={contaId ?? SENTINELA_CONTA_GERAL}
+                onValueChange={(valor) => setContaId(valor === SENTINELA_CONTA_GERAL ? null : valor)}
+              >
+                <SelectTrigger className="w-[140px] sm:w-[180px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={SENTINELA_CONTA_GERAL}>Geral (todas as contas)</SelectItem>
+                  {contasAtivas.map((conta) => (
+                    <SelectItem key={conta.id} value={conta.id}>
+                      {conta.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
 
             <PeriodPicker
               periodo={periodo}

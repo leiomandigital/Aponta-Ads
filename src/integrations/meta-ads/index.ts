@@ -9,15 +9,27 @@ import {
   normalizarEGravarVideo,
 } from './normalize.js';
 
-async function sync(options: SyncOptions): Promise<SyncResult> {
+async function sync(integrationId: string, accountId: string | null, options: SyncOptions): Promise<SyncResult> {
   const supabaseAdmin = criarSupabaseAdminClient();
-  const credenciais = await obterCredenciais();
+  const credenciais = await obterCredenciais(integrationId);
 
   const subBuscas: Array<[string, () => Promise<number>]> = [
-    ['ad_performance_daily', async () => normalizarEGravarPerformance(supabaseAdmin, await buscarPerformance(credenciais, options.sinceDate, options.untilDate))],
-    ['ad_conversions_daily', async () => normalizarEGravarConversoes(supabaseAdmin, await buscarConversoesPorEvento(credenciais, options.sinceDate, options.untilDate))],
-    ['ad_performance_demographics_daily', async () => normalizarEGravarDemografia(supabaseAdmin, await buscarDemografia(credenciais, options.sinceDate, options.untilDate))],
-    ['ad_video_metrics_daily', async () => normalizarEGravarVideo(supabaseAdmin, await buscarMetricasDeVideo(credenciais, options.sinceDate, options.untilDate))],
+    [
+      'ad_performance_daily',
+      async () => normalizarEGravarPerformance(supabaseAdmin, await buscarPerformance(credenciais, options.sinceDate, options.untilDate), accountId),
+    ],
+    [
+      'ad_conversions_daily',
+      async () => normalizarEGravarConversoes(supabaseAdmin, await buscarConversoesPorEvento(credenciais, options.sinceDate, options.untilDate), accountId),
+    ],
+    [
+      'ad_performance_demographics_daily',
+      async () => normalizarEGravarDemografia(supabaseAdmin, await buscarDemografia(credenciais, options.sinceDate, options.untilDate), accountId),
+    ],
+    [
+      'ad_video_metrics_daily',
+      async () => normalizarEGravarVideo(supabaseAdmin, await buscarMetricasDeVideo(credenciais, options.sinceDate, options.untilDate), accountId),
+    ],
   ];
 
   // As 4 sub-buscas são chamadas independentes à API do Meta — rodar em série

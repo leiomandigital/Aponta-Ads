@@ -35,18 +35,5 @@ export function useBrandSettings() {
     [configuracoes, recarregar]
   );
 
-  const atualizarCor = useCallback(
-    async (cor: string) => {
-      if (!configuracoes) return;
-      try {
-        await integrationsService.atualizarConfiguracoesDoDashboard(configuracoes.id, { brand_primary_color: cor });
-        await recarregar();
-      } catch (erroCapturado) {
-        setErro(erroCapturado instanceof Error ? erroCapturado.message : 'Erro ao atualizar cor');
-      }
-    },
-    [configuracoes, recarregar]
-  );
-
-  return { configuracoes, carregando, enviando, erro, enviarLogo, atualizarCor };
+  return { configuracoes, carregando, enviando, erro, enviarLogo };
 }

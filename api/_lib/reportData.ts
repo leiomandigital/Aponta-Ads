@@ -1,12 +1,25 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { agruparAnalyticsPorDia, agruparMidiaPorDia, calcularMetricasAgregadas } from '../../src/utils/metricsAggregation.js';
-import type { AggregatedMetrics, DashboardSettings, LeadCostDaily, Platform, Region } from '../../src/types/database.types.js';
+import type { AggregatedMetrics, DashboardSettings, LeadCostDaily, Platform } from '../../src/types/database.types.js';
 
 export interface FiltrosRelatorio {
   dataInicio: string;
   dataFim: string;
   platform?: Platform;
-  region?: Region;
+  /** undefined = "Geral" (soma as contas ativas + as compartilhadas). Ver dashboardService.ts — mesma regra. */
+  accountId?: string;
+  /** Contas desativadas — excluídas da soma "Geral". Calculado no próprio pdf.ts, nunca recebido do cliente. */
+  idsContasInativas?: string[];
+}
+
+function aplicarFiltroDeConta<T extends { or: (filtro: string) => T }>(
+  consulta: T,
+  accountId: string | undefined,
+  idsContasInativas: string[] = []
+): T {
+  if (accountId) return consulta.or(`account_id.eq.${accountId},account_id.is.null`);
+  if (idsContasInativas.length > 0) return consulta.or(`account_id.is.null,account_id.not.in.(${idsContasInativas.join(',')})`);
+  return consulta;
 }
 
 export async function buscarMetricasDeMidiaPaga(
@@ -20,7 +33,7 @@ export async function buscarMetricasDeMidiaPaga(
     .lte('date', filtros.dataFim);
 
   if (filtros.platform) consulta = consulta.eq('platform', filtros.platform);
-  if (filtros.region) consulta = consulta.eq('region', filtros.region);
+  consulta = aplicarFiltroDeConta(consulta, filtros.accountId, filtros.idsContasInativas);
 
   const { data, error } = await consulta;
   if (error) throw new Error(error.message);
@@ -35,7 +48,7 @@ export async function buscarSerieTemporalMidiaPaga(supabaseAdmin: SupabaseClient
     .lte('date', filtros.dataFim);
 
   if (filtros.platform) consulta = consulta.eq('platform', filtros.platform);
-  if (filtros.region) consulta = consulta.eq('region', filtros.region);
+  consulta = aplicarFiltroDeConta(consulta, filtros.accountId, filtros.idsContasInativas);
 
   const { data, error } = await consulta;
   if (error) throw new Error(error.message);
@@ -44,7 +57,7 @@ export async function buscarSerieTemporalMidiaPaga(supabaseAdmin: SupabaseClient
 
 export async function buscarMetricasAnalytics(
   supabaseAdmin: SupabaseClient,
-  filtros: Pick<FiltrosRelatorio, 'dataInicio' | 'dataFim' | 'region'>
+  filtros: Pick<FiltrosRelatorio, 'dataInicio' | 'dataFim' | 'accountId' | 'idsContasInativas'>
 ): Promise<{ sessions: number; users: number; leads: number }> {
   let consulta = supabaseAdmin
     .from('analytics_sessions_daily')
@@ -52,7 +65,7 @@ export async function buscarMetricasAnalytics(
     .gte('date', filtros.dataInicio)
     .lte('date', filtros.dataFim);
 
-  if (filtros.region) consulta = consulta.eq('region', filtros.region);
+  consulta = aplicarFiltroDeConta(consulta, filtros.accountId, filtros.idsContasInativas);
 
   const { data, error } = await consulta;
   if (error) throw new Error(error.message);
@@ -69,7 +82,7 @@ export async function buscarMetricasAnalytics(
 
 export async function buscarSerieTemporalAnalytics(
   supabaseAdmin: SupabaseClient,
-  filtros: Pick<FiltrosRelatorio, 'dataInicio' | 'dataFim' | 'region'>
+  filtros: Pick<FiltrosRelatorio, 'dataInicio' | 'dataFim' | 'accountId' | 'idsContasInativas'>
 ) {
   let consulta = supabaseAdmin
     .from('analytics_sessions_daily')
@@ -77,7 +90,7 @@ export async function buscarSerieTemporalAnalytics(
     .gte('date', filtros.dataInicio)
     .lte('date', filtros.dataFim);
 
-  if (filtros.region) consulta = consulta.eq('region', filtros.region);
+  consulta = aplicarFiltroDeConta(consulta, filtros.accountId, filtros.idsContasInativas);
 
   const { data, error } = await consulta;
   if (error) throw new Error(error.message);
@@ -87,7 +100,7 @@ export async function buscarSerieTemporalAnalytics(
 /** Top 10 páginas por sessões — dá ao relatório de Analytics uma tabela própria, já que GA4 não tem "campanha". */
 export async function buscarSessoesPorPagina(
   supabaseAdmin: SupabaseClient,
-  filtros: Pick<FiltrosRelatorio, 'dataInicio' | 'dataFim' | 'region'>
+  filtros: Pick<FiltrosRelatorio, 'dataInicio' | 'dataFim' | 'accountId' | 'idsContasInativas'>
 ) {
   let consulta = supabaseAdmin
     .from('analytics_sessions_daily')
@@ -95,7 +108,7 @@ export async function buscarSessoesPorPagina(
     .gte('date', filtros.dataInicio)
     .lte('date', filtros.dataFim);
 
-  if (filtros.region) consulta = consulta.eq('region', filtros.region);
+  consulta = aplicarFiltroDeConta(consulta, filtros.accountId, filtros.idsContasInativas);
 
   const { data, error } = await consulta;
   if (error) throw new Error(error.message);
@@ -121,15 +134,18 @@ export async function buscarSessoesPorPagina(
 // origem. Ver Data Security Skill, seção 2.
 export async function buscarCustoPorLeadPorOrigem(
   supabaseAdmin: SupabaseClient,
-  filtros: Pick<FiltrosRelatorio, 'dataInicio' | 'dataFim'>
+  filtros: Pick<FiltrosRelatorio, 'dataInicio' | 'dataFim' | 'accountId' | 'idsContasInativas'>
 ): Promise<LeadCostDaily[]> {
-  const { data, error } = await supabaseAdmin
+  let consulta = supabaseAdmin
     .from('vw_lead_cost_daily')
     .select('*')
     .gte('date', filtros.dataInicio)
     .lte('date', filtros.dataFim)
     .order('date', { ascending: false });
 
+  consulta = aplicarFiltroDeConta(consulta, filtros.accountId, filtros.idsContasInativas);
+
+  const { data, error } = await consulta;
   if (error) throw new Error(error.message);
   return data ?? [];
 }
@@ -142,7 +158,7 @@ export async function buscarCampanhas(supabaseAdmin: SupabaseClient, filtros: Fi
     .lte('date', filtros.dataFim);
 
   if (filtros.platform) consulta = consulta.eq('platform', filtros.platform);
-  if (filtros.region) consulta = consulta.eq('region', filtros.region);
+  consulta = aplicarFiltroDeConta(consulta, filtros.accountId, filtros.idsContasInativas);
 
   const { data, error } = await consulta;
   if (error) throw new Error(error.message);

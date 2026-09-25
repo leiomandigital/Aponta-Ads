@@ -17,6 +17,8 @@ const raizProjeto = path.resolve(fileURLToPath(new URL('.', import.meta.url)), '
 const FUNCOES = [
   'api/sync/dispatch.ts',
   'api/integrations/save-credentials.ts',
+  'api/integrations/list-assets.ts',
+  'api/integrations/save-assets.ts',
   'api/export/pdf.ts',
 ];
 

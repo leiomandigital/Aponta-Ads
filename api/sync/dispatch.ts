@@ -1,10 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { criarSupabaseAdminClient } from '../../src/lib/supabaseAdminClient.js';
 import { executarSincronizacao } from '../../src/integrations/syncRunner.js';
-import type { IntegrationKey } from '../../src/integrations/types.js';
 import { autenticarCron, autenticarUsuario } from '../_lib/auth.js';
-
-const CHAVES_VALIDAS: IntegrationKey[] = ['google_ads', 'ga4', 'meta_ads', 'rd_station'];
 
 // O Vercel Cron chama o path agendado com GET (enviando Authorization: Bearer
 // <CRON_SECRET>), então GET só é aceito quando a credencial do cron é válida.
@@ -24,26 +21,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(401).json({ error: 'Não autenticado' });
   }
 
+  // Desde a migration 026, uma key de plataforma pode ter várias linhas de
+  // `integrations` (uma por conta, mais a compartilhada) — o parâmetro
+  // manual passou a identificar a LINHA (id), não mais a plataforma.
   const integrationParam = typeof req.query.integration === 'string' ? req.query.integration : undefined;
-
-  if (integrationParam && !CHAVES_VALIDAS.includes(integrationParam as IntegrationKey)) {
-    return res.status(400).json({ error: `Integração desconhecida: ${integrationParam}` });
-  }
+  // Igual em todas as etapas de um mesmo clique de "sincronizar agora" (ver
+  // integrationsService.ts) — permite a tela de histórico agrupá-las como um
+  // evento só (migration 037). Nunca vem no disparo automático.
+  const runIdParam = typeof req.query.runId === 'string' ? req.query.runId : undefined;
 
   const supabaseAdmin = criarSupabaseAdminClient();
 
-  // Chamada manual (com ?integration=) sincroniza só aquela integração.
-  // Chamada do cron (sem parâmetro) sincroniza todas as ativas em paralelo —
-  // Promise.allSettled garante que uma falha não derruba as outras.
+  // Chamada manual (com ?integration=<id>) sincroniza só aquela linha.
+  // Chamada do cron (sem parâmetro) sincroniza todas as linhas ativas em
+  // paralelo — Promise.allSettled garante que uma falha não derruba as outras.
   if (integrationParam) {
-    const resultado = await executarSincronizacao(supabaseAdmin, integrationParam as IntegrationKey);
+    const { data: integracao, error: erroIntegracao } = await supabaseAdmin
+      .from('integrations')
+      .select('id')
+      .eq('id', integrationParam)
+      .maybeSingle();
+
+    if (erroIntegracao) {
+      return res.status(500).json({ error: erroIntegracao.message });
+    }
+    if (!integracao) {
+      return res.status(404).json({ error: `Integração desconhecida: ${integrationParam}` });
+    }
+
+    const resultado = await executarSincronizacao(supabaseAdmin, integrationParam, runIdParam);
     const statusHttp = resultado.status === 'error' ? 502 : 200;
     return res.status(statusHttp).json(resultado);
   }
 
   const { data: integracoesAtivas, error } = await supabaseAdmin
     .from('integrations')
-    .select('key')
+    .select('id, key')
     .eq('is_active', true);
 
   if (error) {
@@ -52,8 +65,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const resultados = await Promise.allSettled(
     (integracoesAtivas ?? []).map((integracao) =>
-      executarSincronizacao(supabaseAdmin, integracao.key as IntegrationKey).then((resultado) => ({
+      executarSincronizacao(supabaseAdmin, integracao.id).then((resultado) => ({
         integration: integracao.key,
+        integrationId: integracao.id,
         ...resultado,
       }))
     )
@@ -62,7 +76,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const resumo = resultados.map((resultado, indice) =>
     resultado.status === 'fulfilled'
       ? resultado.value
-      : { integration: integracoesAtivas?.[indice]?.key, status: 'error', errorMessage: String(resultado.reason) }
+      : {
+          integration: integracoesAtivas?.[indice]?.key,
+          integrationId: integracoesAtivas?.[indice]?.id,
+          status: 'error',
+          errorMessage: String(resultado.reason),
+        }
   );
 
   return res.status(200).json({ resultados: resumo });

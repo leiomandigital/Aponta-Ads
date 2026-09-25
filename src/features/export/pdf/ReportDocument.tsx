@@ -31,12 +31,6 @@ const ROTULO_ABA: Record<string, string> = {
   analytics: 'Analytics',
 };
 
-const ROTULO_REGIAO: Record<string, string> = {
-  todas: 'Todas as regiões',
-  ES: 'Espírito Santo',
-  TO: 'Tocantins',
-};
-
 // Mesma paleta validada (dataviz skill) usada nos gráficos do app — ver
 // src/index.css (--series-1/--series-2) e a leitura do palette.md. Fica
 // separada da cor de marca de propósito (cor de marca não deve virar cor de
@@ -179,7 +173,7 @@ interface PontoSerieAnalytics {
 
 interface ReportDocumentProps {
   aba: string;
-  regiao: string;
+  conta: string;
   dataInicio: string;
   dataFim: string;
   logoUrl?: string | null;
@@ -194,7 +188,7 @@ interface ReportDocumentProps {
 
 export function ReportDocument({
   aba,
-  regiao,
+  conta,
   dataInicio,
   dataFim,
   logoUrl,
@@ -213,7 +207,7 @@ export function ReportDocument({
           <View>
             <Text style={estilos.titulo}>ApontaAds — {ROTULO_ABA[aba] ?? aba}</Text>
             <Text style={estilos.subtitulo}>
-              {ROTULO_REGIAO[regiao] ?? regiao} · {formatarData(dataInicio)} a {formatarData(dataFim)}
+              {conta} · {formatarData(dataInicio)} a {formatarData(dataFim)}
             </Text>
           </View>
           {logoUrl && <Image src={logoUrl} style={estilos.logo} />}

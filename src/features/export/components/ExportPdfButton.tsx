@@ -21,12 +21,6 @@ const ROTULO_ABA: Record<string, string> = {
   analytics: 'Analytics',
 };
 
-const ROTULO_REGIAO: Record<string, string> = {
-  todas: 'Todas as regiões',
-  ES: 'Espírito Santo',
-  TO: 'Tocantins',
-};
-
 interface ExportPdfButtonProps {
   parametros: ParametrosExportacaoPdf;
 }
@@ -66,8 +60,8 @@ export function ExportPdfButton({ parametros }: ExportPdfButtonProps) {
             <span className="font-medium">{ROTULO_ABA[parametros.aba] ?? parametros.aba}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-muted-foreground">Região</span>
-            <span className="font-medium">{ROTULO_REGIAO[parametros.region] ?? parametros.region}</span>
+            <span className="text-muted-foreground">Conta</span>
+            <span className="font-medium">{parametros.accountName ?? 'Geral (todas as contas)'}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Período</span>

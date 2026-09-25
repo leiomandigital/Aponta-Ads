@@ -3,14 +3,20 @@ import type { IntegrationConnector, SyncOptions, SyncResult } from '../types.js'
 import { obterCredenciais, refreshCredentialsIfNeeded } from './auth.js';
 import { buscarConversoes } from './fetch.js';
 import { normalizarEGravarLeads } from './normalize.js';
+import { buscarIdentificadoresSelecionados } from '../assetSelection.js';
 
-async function sync(options: SyncOptions): Promise<SyncResult> {
+async function sync(integrationId: string, accountId: string | null, options: SyncOptions): Promise<SyncResult> {
   const supabaseAdmin = criarSupabaseAdminClient();
-  const credenciais = await obterCredenciais();
+  const credenciais = await obterCredenciais(integrationId);
 
   try {
-    const conversoes = await buscarConversoes(credenciais, options.sinceDate, options.untilDate);
-    const registrosGravados = await normalizarEGravarLeads(supabaseAdmin, conversoes);
+    // Ver assetSelection.ts: array = filtra estritamente a isso; array vazio
+    // numa integração NOVA = nada selecionado ainda, não traz nada; undefined
+    // = integração antiga que já sincronizava antes desta seleção existir,
+    // não filtra (não interrompe o que já funcionava).
+    const identificadoresSelecionados = await buscarIdentificadoresSelecionados(supabaseAdmin, integrationId);
+    const conversoes = await buscarConversoes(credenciais, options.sinceDate, options.untilDate, identificadoresSelecionados);
+    const registrosGravados = await normalizarEGravarLeads(supabaseAdmin, conversoes, accountId);
 
     return {
       status: 'success',

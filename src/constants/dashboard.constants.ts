@@ -17,10 +17,3 @@ export const PERIODOS_DASHBOARD = [
 // preset do PeriodPicker) — o intervalo customizado vem de um estado próprio.
 export type PeriodoDashboard = (typeof PERIODOS_DASHBOARD)[number]['valor'] | 'custom';
 
-export const REGIOES_DASHBOARD = [
-  { valor: 'todas', rotulo: 'Todas as regiões' },
-  { valor: 'ES', rotulo: 'Espírito Santo' },
-  { valor: 'TO', rotulo: 'Tocantins' },
-] as const;
-
-export type RegiaoDashboard = (typeof REGIOES_DASHBOARD)[number]['valor'];
