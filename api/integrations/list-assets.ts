@@ -3,13 +3,14 @@ import { criarSupabaseAdminClient } from '../../src/lib/supabaseAdminClient.js';
 import { autenticarUsuario } from '../_lib/auth.js';
 import { refreshCredentialsIfNeeded as refreshGa4, obterCredenciais as obterCredenciaisGa4 } from '../../src/integrations/ga4/auth.js';
 import { listarPropriedadesDisponiveis } from '../../src/integrations/ga4/fetch.js';
-import { refreshCredentialsIfNeeded as refreshRd, obterCredenciais as obterCredenciaisRd } from '../../src/integrations/rd-station/auth.js';
-import { listarIdentificadoresDisponiveis } from '../../src/integrations/rd-station/fetch.js';
+import { refreshCredentialsIfNeeded as refreshGoogleAds, obterCredenciais as obterCredenciaisGoogleAds } from '../../src/integrations/google-ads/auth.js';
+import { listarContasDisponiveis } from '../../src/integrations/google-ads/fetch.js';
 
 /**
- * Lista os ativos (propriedades GA4 / identificadores de conversão RD Station)
- * disponíveis para uma integração já com credencial salva, junto com o que já
- * está selecionado — usado pela etapa 2 do fluxo de conexão (AssetSelectionDialog).
+ * Lista os ativos (propriedades GA4 / identificadores de conversão RD Station
+ * / contas Google Ads encontradas na planilha) disponíveis para uma
+ * integração já com credencial salva, junto com o que já está selecionado —
+ * usado pela etapa 2 do fluxo de conexão (AssetSelectionDialog).
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -49,9 +50,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (integracao.key === 'rd_station') {
-      await refreshRd(integrationId);
-      const credenciais = await obterCredenciaisRd(integrationId);
-      const ativos = await listarIdentificadoresDisponiveis(credenciais);
+      // Não existe endpoint na API do RD Station pra listar formulários/LPs
+      // com antecedência — "disponíveis" aqui é o que já chegou de verdade
+      // via webhook (integration_discovered_assets), não uma amostra da API.
+      const { data: descobertos, error: erroDescobertos } = await supabaseAdmin
+        .from('integration_discovered_assets')
+        .select('external_id, name')
+        .eq('integration_id', integrationId)
+        .order('first_seen_at', { ascending: true });
+      if (erroDescobertos) throw new Error(erroDescobertos.message);
 
       const { data: linhasSelecionadas, error: erroSelecionadas } = await supabaseAdmin
         .from('integration_selected_assets')
@@ -60,9 +67,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (erroSelecionadas) throw new Error(erroSelecionadas.message);
 
       return res.status(200).json({
-        ativos,
+        ativos: (descobertos ?? []).map((linha) => ({ externalId: linha.external_id, name: linha.name ?? linha.external_id })),
         selecionados: (linhasSelecionadas ?? []).map((linha) => linha.external_id as string),
         selecaoUnica: false,
+      });
+    }
+
+    if (integracao.key === 'google_ads') {
+      await refreshGoogleAds(integrationId);
+      const credenciais = await obterCredenciaisGoogleAds(integrationId);
+      const ativos = await listarContasDisponiveis(credenciais);
+      return res.status(200).json({
+        ativos,
+        selecionados: credenciais.customerId ? [credenciais.customerId] : [],
+        selecaoUnica: true,
       });
     }
 

@@ -1,16 +1,32 @@
-import { useRef, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { NOME_PADRAO_SISTEMA } from '@/lib/branding';
 import { useBrandSettings } from '../hooks/useBrandSettings';
 
 export function BrandSettingsSection() {
-  const { configuracoes, carregando, enviando, erro, enviarLogo } = useBrandSettings();
+  const { configuracoes, carregando, enviando, erro, enviarLogo, salvarNome } = useBrandSettings();
   const inputArquivoRef = useRef<HTMLInputElement>(null);
+  const [nome, setNome] = useState('');
+
+  // Sincroniza o campo com o que veio do banco só depois que carrega (e
+  // quando o valor salvo muda) — sem isso, cada re-render apagaria o que o
+  // usuário está digitando.
+  useEffect(() => {
+    setNome(configuracoes?.system_name ?? '');
+  }, [configuracoes?.system_name]);
 
   const handleSelecionarArquivo = (evento: ChangeEvent<HTMLInputElement>) => {
     const arquivo = evento.target.files?.[0];
     if (arquivo) enviarLogo(arquivo);
+  };
+
+  const handleSalvarNome = (evento: FormEvent) => {
+    evento.preventDefault();
+    salvarNome(nome);
   };
 
   if (carregando) {
@@ -30,9 +46,12 @@ export function BrandSettingsSection() {
     <Card>
       <CardHeader>
         <CardTitle>Marca</CardTitle>
-        <CardDescription>Logo usada no cabeçalho do PDF exportado.</CardDescription>
+        <CardDescription>
+          Logo e nome de apresentação usados no menu, na aba do navegador, no app instalado no celular e no PDF
+          exportado.
+        </CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4">
+      <CardContent className="flex flex-col gap-6">
         {erro && <p className="text-sm text-destructive">{erro}</p>}
 
         <div className="flex items-center gap-4">
@@ -48,6 +67,26 @@ export function BrandSettingsSection() {
             {enviando ? 'Enviando...' : 'Enviar logo'}
           </Button>
         </div>
+
+        <form onSubmit={handleSalvarNome} className="flex flex-col gap-2">
+          <Label htmlFor="nome-sistema">Nome do sistema</Label>
+          <div className="flex gap-2">
+            <Input
+              id="nome-sistema"
+              value={nome}
+              onChange={(evento) => setNome(evento.target.value)}
+              placeholder={NOME_PADRAO_SISTEMA}
+              maxLength={60}
+              className="max-w-xs"
+            />
+            <Button type="submit" variant="outline" disabled={enviando}>
+              {enviando ? 'Salvando...' : 'Salvar'}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Sem esse campo preenchido, o sistema aparece como &quot;{NOME_PADRAO_SISTEMA}&quot;.
+          </p>
+        </form>
       </CardContent>
     </Card>
   );

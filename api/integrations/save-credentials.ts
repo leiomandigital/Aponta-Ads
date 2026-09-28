@@ -1,8 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { salvarCredenciais } from '../../src/integrations/credentialsVault.js';
+import { lerCredenciais, salvarCredenciais } from '../../src/integrations/credentialsVault.js';
 import { criarSupabaseAdminClient } from '../../src/lib/supabaseAdminClient.js';
 import type { IntegrationKey } from '../../src/integrations/types.js';
 import { autenticarUsuario } from '../_lib/auth.js';
+import { registrarWebhookSeNecessario } from '../../src/integrations/rd-station/webhookRegistration.js';
 
 const CHAVES_VALIDAS: IntegrationKey[] = ['google_ads', 'ga4', 'meta_ads', 'rd_station'];
 
@@ -61,10 +62,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // conectada/pendente/com erro NÃO mexe em is_active — o usuário pode ter
     // pausado ela de propósito antes de precisar atualizar a credencial.
     let eraDesconectada = false;
+    let chaveResolvida: IntegrationKey;
 
     if (!idAlvo) {
       const chave = integrationKey as IntegrationKey;
       const contaAlvo: string | null = accountId ?? null;
+      chaveResolvida = chave;
 
       let consultaExistente = supabaseAdmin.from('integrations').select('id, status').eq('key', chave);
       consultaExistente = contaAlvo ? consultaExistente.eq('account_id', contaAlvo) : consultaExistente.is('account_id', null);
@@ -86,9 +89,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         idAlvo = nova.id;
         eraDesconectada = true;
       }
+    } else {
+      const { data: existente, error: erroExistente } = await supabaseAdmin
+        .from('integrations')
+        .select('key')
+        .eq('id', idAlvo)
+        .single();
+      if (erroExistente) throw new Error(erroExistente.message);
+      chaveResolvida = existente.key as IntegrationKey;
     }
 
-    await salvarCredenciais(idAlvo, payload);
+    // Mescla com o que já estava salvo em vez de sobrescrever tudo — campos
+    // que o formulário não pede (accessToken/webhookUuid do RD Station,
+    // propertyId do GA4, etc.) precisam sobreviver a um "Reconectar" que só
+    // reenvia os campos visíveis na tela.
+    const credenciaisExistentes = await lerCredenciais<Record<string, unknown>>(idAlvo);
+    await salvarCredenciais(idAlvo, { ...(credenciaisExistentes ?? {}), ...payload });
+
+    if (chaveResolvida === 'rd_station') {
+      await registrarWebhookSeNecessario(idAlvo);
+    }
 
     // Credenciais novas ainda não foram validadas por uma sincronização — 'pending'
     // libera o botão "Sincronizar agora" mesmo se a integração já estava 'connected'.
@@ -103,6 +123,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (erro) {
     // Nunca logar o payload aqui — só a mensagem de erro (ver Integration Security Skill, seção 4).
     console.error(`Falha ao salvar credenciais de ${integrationKey ?? integrationId}:`, erro instanceof Error ? erro.message : erro);
-    return res.status(500).json({ error: 'Falha ao salvar credenciais' });
+    return res.status(500).json({ error: erro instanceof Error ? erro.message : 'Falha ao salvar credenciais' });
   }
 }

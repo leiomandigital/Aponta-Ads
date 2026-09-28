@@ -1,81 +1,116 @@
 import type { GoogleAdsCredentials } from './auth.js';
-
-// Confirme esta versão contra https://developers.google.com/google-ads/api/docs/release-notes
-// antes de cada deploy — a Google Ads API descontinua versões antigas periodicamente.
-const GOOGLE_ADS_API_VERSION = 'v17';
+import { extrairIdDaPlanilha, buscarAba, parseNumeroPlanilha, parseDataPlanilha } from '../googleSheetsCsv.js';
 
 interface GoogleAdsRow {
   [chave: string]: unknown;
 }
 
-async function executarConsultaGAQL(
-  credenciais: GoogleAdsCredentials,
-  gaql: string
-): Promise<GoogleAdsRow[]> {
-  const resposta = await fetch(
-    `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers/${credenciais.customerId}/googleAds:searchStream`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${credenciais.accessToken}`,
-        'developer-token': credenciais.developerToken,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ query: gaql }),
-    }
-  );
-
-  if (!resposta.ok) {
-    throw new Error(`Google Ads: consulta GAQL falhou (HTTP ${resposta.status})`);
-  }
-
-  const lotes = (await resposta.json()) as Array<{ results?: GoogleAdsRow[] }>;
-  return lotes.flatMap((lote) => lote.results ?? []);
+function normalizarCustomerId(id: string): string {
+  return id.replace(/-/g, '').trim();
 }
 
 /**
- * Performance por campanha/conjunto/anúncio, cliques/impressões/custo.
- * Nem toda campanha tem "conjunto de anúncio" (ex: Performance Max) — o
- * campo ad_group vem ausente nesses casos, tratado como null em normalize.ts.
+ * Lê uma aba da planilha escrita pelo Google Ads Script (ver
+ * googleAdsScriptTemplate.ts) e filtra por Customer ID + janela de datas. As
+ * colunas de cada aba espelham as consultas GAQL do próprio script — ao mudar
+ * uma, atualize a outra.
  */
-export async function buscarPerformance(credenciais: GoogleAdsCredentials, sinceDate: string, untilDate: string) {
-  const gaql = `
-    SELECT
-      campaign.id, campaign.name,
-      ad_group.id, ad_group.name,
-      ad_group_ad.ad.id, ad_group_ad.ad.name,
-      segments.date,
-      metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
-    FROM ad_group_ad
-    WHERE segments.date >= '${sinceDate}' AND segments.date <= '${untilDate}'
-  `;
-  return executarConsultaGAQL(credenciais, gaql);
+async function lerAbaFiltrada(
+  credenciais: GoogleAdsCredentials,
+  nomeAba: string,
+  sinceDate: string,
+  untilDate: string
+): Promise<Record<string, string>[]> {
+  const sheetId = extrairIdDaPlanilha(credenciais.sheetsUrl);
+  if (!sheetId) throw new Error('Google Ads: URL da planilha inválida');
+
+  const customerIdAlvo = credenciais.customerId ? normalizarCustomerId(credenciais.customerId) : null;
+  const linhas = await buscarAba(sheetId, nomeAba);
+
+  return linhas.filter((linha) => {
+    if (customerIdAlvo && linha.customer_id && normalizarCustomerId(linha.customer_id) !== customerIdAlvo) return false;
+    const data = parseDataPlanilha(linha.date) ?? linha.date;
+    return data >= sinceDate && data <= untilDate;
+  });
 }
 
-/** Conversões nomeadas — o Google Ads não entrega isso na mesma consulta de cliques/impressões. */
-export async function buscarConversoesNomeadas(credenciais: GoogleAdsCredentials, sinceDate: string, untilDate: string) {
-  const gaql = `
-    SELECT
-      campaign.id, campaign.name,
-      ad_group.id, ad_group.name,
-      segments.date, segments.conversion_action_name,
-      metrics.conversions, metrics.conversions_value
-    FROM ad_group
-    WHERE segments.date >= '${sinceDate}' AND segments.date <= '${untilDate}'
-  `;
-  return executarConsultaGAQL(credenciais, gaql);
+/**
+ * Performance por campanha/conjunto/anúncio, cliques/impressões/custo — aba "Performance".
+ * Nem toda campanha tem "conjunto de anúncio" (ex: Performance Max) — os
+ * campos vêm vazios na planilha nesses casos, tratado como null em normalize.ts.
+ */
+export async function buscarPerformance(credenciais: GoogleAdsCredentials, sinceDate: string, untilDate: string): Promise<GoogleAdsRow[]> {
+  const linhas = await lerAbaFiltrada(credenciais, 'Performance', sinceDate, untilDate);
+  return linhas.map((linha) => ({
+    campaign: { id: linha.campaign_id, name: linha.campaign_name || undefined },
+    adGroup: { id: linha.adgroup_id || undefined, name: linha.adgroup_name || undefined },
+    adGroupAd: { ad: { id: linha.ad_id || undefined, name: linha.ad_name || undefined } },
+    segments: { date: parseDataPlanilha(linha.date) ?? linha.date },
+    metrics: {
+      impressions: String(parseNumeroPlanilha(linha.impressions)),
+      clicks: String(parseNumeroPlanilha(linha.clicks)),
+      costMicros: String(parseNumeroPlanilha(linha.cost_micros)),
+      conversions: String(parseNumeroPlanilha(linha.conversions)),
+    },
+  }));
 }
 
-/** Palavra-chave/termo de pesquisa. Palavras-chave negativas ficam de fora (decisão da reunião de kickoff). */
-export async function buscarPalavrasChave(credenciais: GoogleAdsCredentials, sinceDate: string, untilDate: string) {
-  const gaql = `
-    SELECT
-      campaign.id, campaign.name,
-      segments.date, segments.keyword.info.text, segments.search_term_view.search_term,
-      metrics.clicks, metrics.impressions, metrics.cost_micros
-    FROM search_term_view
-    WHERE segments.date >= '${sinceDate}' AND segments.date <= '${untilDate}'
-      AND ad_group_criterion.negative = false
-  `;
-  return executarConsultaGAQL(credenciais, gaql);
+/** Conversões nomeadas — aba "Conversoes". O Google Ads não entrega isso na mesma consulta de cliques/impressões. */
+export async function buscarConversoesNomeadas(
+  credenciais: GoogleAdsCredentials,
+  sinceDate: string,
+  untilDate: string
+): Promise<GoogleAdsRow[]> {
+  const linhas = await lerAbaFiltrada(credenciais, 'Conversoes', sinceDate, untilDate);
+  return linhas.map((linha) => ({
+    campaign: { id: linha.campaign_id, name: linha.campaign_name || undefined },
+    adGroup: { id: linha.adgroup_id || undefined, name: linha.adgroup_name || undefined },
+    segments: {
+      date: parseDataPlanilha(linha.date) ?? linha.date,
+      conversionActionName: linha.conversion_action_name || undefined,
+    },
+    metrics: {
+      conversions: String(parseNumeroPlanilha(linha.conversions)),
+      conversionsValue: linha.conversions_value ? String(parseNumeroPlanilha(linha.conversions_value)) : undefined,
+    },
+  }));
+}
+
+/** Palavra-chave/termo de pesquisa — aba "PalavrasChave". Palavras-chave negativas já ficam de fora (filtro aplicado pelo Script). */
+export async function buscarPalavrasChave(
+  credenciais: GoogleAdsCredentials,
+  sinceDate: string,
+  untilDate: string
+): Promise<GoogleAdsRow[]> {
+  const linhas = await lerAbaFiltrada(credenciais, 'PalavrasChave', sinceDate, untilDate);
+  return linhas.map((linha) => ({
+    campaign: { id: linha.campaign_id, name: linha.campaign_name || undefined },
+    segments: {
+      date: parseDataPlanilha(linha.date) ?? linha.date,
+      keyword: linha.keyword ? { info: { text: linha.keyword } } : undefined,
+      searchTermView: linha.search_term ? { searchTerm: linha.search_term } : undefined,
+    },
+    metrics: {
+      clicks: String(parseNumeroPlanilha(linha.clicks)),
+      impressions: String(parseNumeroPlanilha(linha.impressions)),
+      costMicros: String(parseNumeroPlanilha(linha.cost_micros)),
+    },
+  }));
+}
+
+/** Pares Customer ID/nome encontrados na planilha — usado na etapa de seleção de conta (ver AssetSelectionDialog). */
+export async function listarContasDisponiveis(
+  credenciais: Pick<GoogleAdsCredentials, 'sheetsUrl'>
+): Promise<Array<{ externalId: string; name: string }>> {
+  const sheetId = extrairIdDaPlanilha(credenciais.sheetsUrl);
+  if (!sheetId) throw new Error('Google Ads: URL da planilha inválida');
+
+  const linhas = await buscarAba(sheetId, 'Performance');
+  const vistos = new Map<string, string>();
+  for (const linha of linhas) {
+    const id = linha.customer_id ? normalizarCustomerId(linha.customer_id) : '';
+    if (!id || vistos.has(id)) continue;
+    vistos.set(id, linha.customer_name || id);
+  }
+  return Array.from(vistos.entries()).map(([externalId, name]) => ({ externalId, name }));
 }

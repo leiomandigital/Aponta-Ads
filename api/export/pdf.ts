@@ -83,6 +83,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         conta: typeof accountName === 'string' && accountName ? accountName : 'Geral (todas as contas)',
         dataInicio,
         dataFim,
+        nomeDoSistema: configuracoes?.system_name,
         logoUrl: configuracoes?.client_logo_url,
         metricasMidia,
         metricasAnalytics,

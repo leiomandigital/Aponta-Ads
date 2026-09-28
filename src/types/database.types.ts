@@ -91,6 +91,7 @@ export interface LeadCostDaily {
 export interface DashboardSettings {
   id: string;
   client_logo_url: string | null;
+  system_name: string | null;
 }
 
 export interface SyncLog {

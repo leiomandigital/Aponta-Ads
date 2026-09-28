@@ -5,9 +5,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useBranding } from '@/lib/branding';
 
 export function LoginPage() {
   const { autenticado, entrando, erro, entrar } = useAuth();
+  const { nome } = useBranding();
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const location = useLocation();
@@ -30,7 +32,7 @@ export function LoginPage() {
     <div className="flex min-h-svh items-center justify-center bg-muted/40 p-4">
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
-          <CardTitle className="text-xl">ApontaAds</CardTitle>
+          <CardTitle className="text-xl">{nome}</CardTitle>
           <CardDescription>Entre com seu e-mail e senha para acessar o painel</CardDescription>
         </CardHeader>
         <CardContent>

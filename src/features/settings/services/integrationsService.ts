@@ -251,7 +251,10 @@ export const integrationsService = {
     return nova;
   },
 
-  async atualizarConfiguracoesDoDashboard(id: string, dados: Partial<Pick<DashboardSettings, 'client_logo_url'>>): Promise<void> {
+  async atualizarConfiguracoesDoDashboard(
+    id: string,
+    dados: Partial<Pick<DashboardSettings, 'client_logo_url' | 'system_name'>>
+  ): Promise<void> {
     const { error } = await supabase.from('dashboard_settings').update(dados).eq('id', id);
     if (error) throw new Error(error.message);
   },

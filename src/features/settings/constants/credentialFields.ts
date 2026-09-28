@@ -8,12 +8,11 @@ export interface CampoCredencial {
 // Confirme cada campo contra a documentação atual da respectiva plataforma
 // antes de conectar de verdade — APIs mudam (ver Integration Connector Pattern Skill, seção 5).
 export const CAMPOS_CREDENCIAL: Record<string, CampoCredencial[]> = {
+  // customerId não entra aqui de propósito: depois de salvar a URL da
+  // planilha, a tela mostra o Google Ads Script pra colar e, na sequência, a
+  // seleção de conta (AssetSelectionDialog) — ver GoogleAdsScriptPanel.
   google_ads: [
-    { chave: 'clientId', rotulo: 'Client ID', tipo: 'text', obrigatorio: true },
-    { chave: 'clientSecret', rotulo: 'Client Secret', tipo: 'password', obrigatorio: true },
-    { chave: 'refreshToken', rotulo: 'Refresh Token', tipo: 'password', obrigatorio: true },
-    { chave: 'developerToken', rotulo: 'Developer Token', tipo: 'password', obrigatorio: true },
-    { chave: 'customerId', rotulo: 'Customer ID (sem hífen)', tipo: 'text', obrigatorio: true },
+    { chave: 'sheetsUrl', rotulo: 'URL da planilha do Google Sheets', tipo: 'text', obrigatorio: true },
   ],
   meta_ads: [
     { chave: 'accessToken', rotulo: 'Access Token (longa duração)', tipo: 'password', obrigatorio: true },

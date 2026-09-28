@@ -17,20 +17,12 @@ export default defineConfig({
       // generateSW (padrão), que espera o worker clássico.
       devOptions: { enabled: true },
       includeAssets: ['favicon.svg', 'icons/apple-touch-icon.png'],
-      manifest: {
-        name: 'ApontaAds',
-        short_name: 'ApontaAds',
-        description: 'Painel de marketing digital — Google Ads, GA4, Meta Ads e RD Station em um só lugar',
-        start_url: '/',
-        display: 'standalone',
-        theme_color: '#7a1332',
-        background_color: '#ffffff',
-        icons: [
-          { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
-          { src: '/icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
-        ],
-      },
+      // manifest: false — o manifest.webmanifest não vem mais deste plugin
+      // (estático, preso ao build). O nome do app precisa refletir o
+      // system_name configurado em Configurações → Marca sem rebuild, então
+      // quem serve o manifest agora é api/manifest.ts; index.html aponta
+      // <link rel="manifest"> pra lá.
+      manifest: false,
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico}'],
         navigateFallbackDenylist: [/^\/api/],

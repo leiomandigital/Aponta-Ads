@@ -176,6 +176,7 @@ interface ReportDocumentProps {
   conta: string;
   dataInicio: string;
   dataFim: string;
+  nomeDoSistema?: string | null;
   logoUrl?: string | null;
   metricasMidia?: AggregatedMetrics | null;
   metricasAnalytics?: { sessions: number; users: number; leads: number } | null;
@@ -191,6 +192,7 @@ export function ReportDocument({
   conta,
   dataInicio,
   dataFim,
+  nomeDoSistema,
   logoUrl,
   metricasMidia,
   metricasAnalytics,
@@ -200,12 +202,14 @@ export function ReportDocument({
   campanhas,
   sessoesPorPagina,
 }: ReportDocumentProps) {
+  const nome = nomeDoSistema?.trim() || 'ApontaAds';
+
   return (
     <Document>
       <Page size="A4" style={estilos.page}>
         <View style={estilos.cabecalho}>
           <View>
-            <Text style={estilos.titulo}>ApontaAds — {ROTULO_ABA[aba] ?? aba}</Text>
+            <Text style={estilos.titulo}>{nome} — {ROTULO_ABA[aba] ?? aba}</Text>
             <Text style={estilos.subtitulo}>
               {conta} · {formatarData(dataInicio)} a {formatarData(dataFim)}
             </Text>
@@ -336,7 +340,7 @@ export function ReportDocument({
         )}
 
         <Text style={estilos.rodape} fixed>
-          Gerado por ApontaAds em {formatarDataHora(new Date())}
+          Gerado por {nome} em {formatarDataHora(new Date())}
         </Text>
       </Page>
     </Document>

@@ -35,5 +35,25 @@ export function useBrandSettings() {
     [configuracoes, recarregar]
   );
 
-  return { configuracoes, carregando, enviando, erro, enviarLogo };
+  const salvarNome = useCallback(
+    async (nome: string) => {
+      if (!configuracoes) return;
+      setEnviando(true);
+      setErro(null);
+
+      try {
+        // string vazia grava null, não '' — mantém o fallback "ApontaAds"
+        // (ver NOME_PADRAO_SISTEMA) funcionando quando o cliente limpa o campo.
+        await integrationsService.atualizarConfiguracoesDoDashboard(configuracoes.id, { system_name: nome.trim() || null });
+        await recarregar();
+      } catch (erroCapturado) {
+        setErro(erroCapturado instanceof Error ? erroCapturado.message : 'Erro ao salvar o nome do sistema');
+      } finally {
+        setEnviando(false);
+      }
+    },
+    [configuracoes, recarregar]
+  );
+
+  return { configuracoes, carregando, enviando, erro, enviarLogo, salvarNome };
 }

@@ -14,12 +14,17 @@ import {
 import { CAMPOS_CREDENCIAL } from '../constants/credentialFields';
 import { credentialsService } from '../services/credentialsService';
 import { AssetSelectionDialog } from './AssetSelectionDialog';
+import { GoogleAdsScriptPanel } from './GoogleAdsScriptPanel';
+import { extrairIdDaPlanilha } from '@/integrations/googleSheetsCsv';
 import type { IntegrationKey } from '@/types/database.types';
 
-// GA4 e RD Station exigem uma etapa extra depois de salvar a credencial:
-// escolher qual propriedade/quais identificadores importar (ver
-// AssetSelectionDialog). Google Ads e Meta Ads seguem no fluxo de 1 passo só.
-const PLATAFORMAS_COM_SELECAO_DE_ATIVOS: IntegrationKey[] = ['ga4', 'rd_station'];
+// GA4, RD Station e Google Ads exigem uma etapa extra depois de salvar a
+// credencial: escolher qual propriedade/quais identificadores importar (ver
+// AssetSelectionDialog) — só Meta Ads segue no fluxo de 1 passo só. Google
+// Ads é tratado à parte em handleSalvar (abre o GoogleAdsScriptPanel antes da
+// seleção de conta, já que a planilha só tem dado depois que o usuário roda o
+// script); esta lista aqui serve só pro botão "Editar seleção" do IntegrationCard.
+const PLATAFORMAS_COM_SELECAO_DE_ATIVOS: IntegrationKey[] = ['ga4', 'rd_station', 'google_ads'];
 
 interface CredentialsDialogProps {
   integrationKey: IntegrationKey;
@@ -47,8 +52,15 @@ export function CredentialsDialog({
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [idParaSelecaoDeAtivos, setIdParaSelecaoDeAtivos] = useState<string | null>(null);
+  const [dadosParaScriptGoogleAds, setDadosParaScriptGoogleAds] = useState<{ integrationId: string; spreadsheetId: string } | null>(null);
 
   const handleSalvar = async () => {
+    const spreadsheetId = integrationKey === 'google_ads' ? extrairIdDaPlanilha(valores.sheetsUrl ?? '') : null;
+    if (integrationKey === 'google_ads' && !spreadsheetId) {
+      setErro('Cole a URL completa da planilha (https://docs.google.com/spreadsheets/d/...)');
+      return;
+    }
+
     setSalvando(true);
     setErro(null);
 
@@ -61,7 +73,9 @@ export function CredentialsDialog({
       });
       setValores({});
 
-      if (PLATAFORMAS_COM_SELECAO_DE_ATIVOS.includes(integrationKey)) {
+      if (spreadsheetId) {
+        setDadosParaScriptGoogleAds({ integrationId: resultado.integrationId, spreadsheetId });
+      } else if (PLATAFORMAS_COM_SELECAO_DE_ATIVOS.includes(integrationKey)) {
         setIdParaSelecaoDeAtivos(resultado.integrationId);
       } else {
         await aoSalvarComSucesso();
@@ -73,6 +87,25 @@ export function CredentialsDialog({
       setSalvando(false);
     }
   };
+
+  if (dadosParaScriptGoogleAds) {
+    return (
+      <GoogleAdsScriptPanel
+        integrationId={dadosParaScriptGoogleAds.integrationId}
+        spreadsheetId={dadosParaScriptGoogleAds.spreadsheetId}
+        aberto
+        aoFechar={() => {
+          setDadosParaScriptGoogleAds(null);
+          aoFechar();
+        }}
+        aoSalvarComSucesso={async () => {
+          setDadosParaScriptGoogleAds(null);
+          await aoSalvarComSucesso();
+          aoFechar();
+        }}
+      />
+    );
+  }
 
   if (idParaSelecaoDeAtivos) {
     return (

@@ -17,7 +17,7 @@ const ROTULO_STATUS: Record<IntegrationStatus, { texto: string; variante: 'succe
   disconnected: { texto: 'Desconectado', variante: 'secondary' },
 };
 
-const PLATAFORMAS_COM_SELECAO_DE_ATIVOS = ['ga4', 'rd_station'];
+const PLATAFORMAS_COM_SELECAO_DE_ATIVOS = ['ga4', 'rd_station', 'google_ads'];
 
 interface IntegrationCardProps {
   integration: Integration;

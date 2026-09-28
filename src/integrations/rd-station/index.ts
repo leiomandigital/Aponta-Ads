@@ -1,37 +1,68 @@
-import { criarSupabaseAdminClient } from '../../lib/supabaseAdminClient.js';
-import type { IntegrationConnector, SyncOptions, SyncResult } from '../types.js';
+import type { IntegrationConnector, SyncResult } from '../types.js';
 import { obterCredenciais, refreshCredentialsIfNeeded } from './auth.js';
-import { buscarConversoes } from './fetch.js';
-import { normalizarEGravarLeads } from './normalize.js';
-import { buscarIdentificadoresSelecionados } from '../assetSelection.js';
 
-async function sync(integrationId: string, accountId: string | null, options: SyncOptions): Promise<SyncResult> {
-  const supabaseAdmin = criarSupabaseAdminClient();
+interface WebhookRD {
+  uuid: string;
+  status: string;
+}
+
+// RD Station Marketing não tem endpoint de "listar conversões por período" —
+// os dados chegam em tempo real via webhook (/api/webhooks/rd-station), não
+// por um pull do cron/"Sincronizar agora". sync() não busca lead nenhum, mas
+// não é um no-op: é a checagem de saúde da integração. Sem isso, se o
+// cliente revogar o acesso do app ou desativar a assinatura direto na RD
+// Station, nada no ApontaAds detectaria isso sozinho (o webhook é passivo —
+// só sabemos que parou se alguém notar a falta de leads). Rodando isso todo
+// dia no cron, uma falha vira status 'error' + sync_logs, igual qualquer
+// outra integração.
+async function sync(integrationId: string): Promise<SyncResult> {
   const credenciais = await obterCredenciais(integrationId);
 
-  try {
-    // Ver assetSelection.ts: array = filtra estritamente a isso; array vazio
-    // numa integração NOVA = nada selecionado ainda, não traz nada; undefined
-    // = integração antiga que já sincronizava antes desta seleção existir,
-    // não filtra (não interrompe o que já funcionava).
-    const identificadoresSelecionados = await buscarIdentificadoresSelecionados(supabaseAdmin, integrationId);
-    const conversoes = await buscarConversoes(credenciais, options.sinceDate, options.untilDate, identificadoresSelecionados);
-    const registrosGravados = await normalizarEGravarLeads(supabaseAdmin, conversoes, accountId);
-
-    return {
-      status: 'success',
-      recordsSynced: registrosGravados,
-      details: { leads: 'success' },
-    };
-  } catch (erro) {
-    const mensagem = erro instanceof Error ? erro.message : 'falha desconhecida';
+  if (!credenciais.webhookUuid) {
     return {
       status: 'error',
       recordsSynced: 0,
-      errorMessage: mensagem,
-      details: { leads: `error: ${mensagem}` },
+      errorMessage: 'RD Station: webhook nunca foi registrado — reconecte a integração',
     };
   }
+
+  const resposta = await fetch('https://api.rd.services/integrations/webhooks', {
+    headers: { Authorization: `Bearer ${credenciais.accessToken}` },
+  });
+
+  if (!resposta.ok) {
+    const corpoErro = await resposta.text().catch(() => '');
+    return {
+      status: 'error',
+      recordsSynced: 0,
+      errorMessage: `RD Station: falha ao verificar o webhook (HTTP ${resposta.status}) ${corpoErro}`,
+    };
+  }
+
+  const dados = (await resposta.json()) as { webhooks?: WebhookRD[] };
+  const assinatura = (dados.webhooks ?? []).find((webhook) => webhook.uuid === credenciais.webhookUuid);
+
+  if (!assinatura) {
+    return {
+      status: 'error',
+      recordsSynced: 0,
+      errorMessage: 'RD Station: a assinatura do webhook não existe mais na conta do cliente (revogada?) — reconecte a integração',
+    };
+  }
+
+  if (assinatura.status !== 'active') {
+    return {
+      status: 'error',
+      recordsSynced: 0,
+      errorMessage: `RD Station: assinatura do webhook está com status "${assinatura.status}", não "active" — reconecte a integração`,
+    };
+  }
+
+  return {
+    status: 'success',
+    recordsSynced: 0,
+    details: { rdStation: 'webhook ativo — leads chegam automaticamente por evento' },
+  };
 }
 
 export const rdStationConnector: IntegrationConnector = {

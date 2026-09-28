@@ -11,7 +11,12 @@ import { loadEnv, type Plugin, type ViteDevServer } from 'vite';
 const ROTAS_API: Record<string, string> = {
   '/api/sync/dispatch': '/api/sync/dispatch.ts',
   '/api/export/pdf': '/api/export/pdf.ts',
+  '/api/manifest': '/api/manifest.ts',
   '/api/integrations/save-credentials': '/api/integrations/save-credentials.ts',
+  '/api/integrations/list-assets': '/api/integrations/list-assets.ts',
+  '/api/integrations/save-assets': '/api/integrations/save-assets.ts',
+  '/api/webhooks/rd-station': '/api/webhooks/rd-station.ts',
+  '/api/integrations/rd-station-diagnostico': '/api/integrations/rd-station-diagnostico.ts',
 };
 
 function lerCorpoBruto(req: IncomingMessage): Promise<string> {

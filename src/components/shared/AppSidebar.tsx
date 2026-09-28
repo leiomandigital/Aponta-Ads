@@ -2,6 +2,7 @@ import { LayoutDashboard, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide
 import { NavLink } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { useBranding } from '@/lib/branding';
 
 const ITENS_NAV = [
   { rotulo: 'Dashboard', href: '/dashboard', icone: LayoutDashboard },
@@ -17,13 +18,14 @@ interface AppSidebarProps {
 }
 
 export function AppSidebar({ className, aoNavegar, recolhida = false, aoAlternarRecolhimento }: AppSidebarProps) {
+  const { nome } = useBranding();
   const rotuloAlternar = recolhida ? 'Expandir menu' : 'Recolher menu';
   const IconeAlternar = recolhida ? PanelLeftOpen : PanelLeftClose;
 
   return (
     <nav className={cn('flex h-full flex-col gap-1 p-3', className)}>
       <div className={cn('flex items-center py-3', recolhida ? 'justify-center' : 'justify-between px-2')}>
-        {!recolhida && <span className="whitespace-nowrap text-lg font-semibold tracking-tight">ApontaAds</span>}
+        {!recolhida && <span className="whitespace-nowrap text-lg font-semibold tracking-tight">{nome}</span>}
         {aoAlternarRecolhimento && (
           <Button
             variant="ghost"
