@@ -17,6 +17,7 @@ const ROTAS_API: Record<string, string> = {
   '/api/integrations/save-assets': '/api/integrations/save-assets.ts',
   '/api/webhooks/rd-station': '/api/webhooks/rd-station.ts',
   '/api/integrations/rd-station-diagnostico': '/api/integrations/rd-station-diagnostico.ts',
+  '/api/integrations/rd-station-links': '/api/integrations/rd-station-links.ts',
 };
 
 function lerCorpoBruto(req: IncomingMessage): Promise<string> {

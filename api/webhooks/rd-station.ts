@@ -13,6 +13,10 @@ interface PayloadWebhookRD {
     name?: string;
     funnel?: { lifecycle_stage?: string };
     origin?: string;
+    // Telefone, cargo, empresa, tags, campos personalizados do formulário
+    // (cf_*) etc. — campos dinâmicos, não vale tipar um por um. Repassado
+    // inteiro pra leads.raw_data (ver normalize.ts).
+    [chave: string]: unknown;
   };
 }
 
@@ -72,6 +76,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       eventTimestamp: payload.event_timestamp ?? new Date().toISOString(),
       lifecycleStage: payload.contact.funnel?.lifecycle_stage,
       origin: payload.contact.origin,
+      rawContact: payload.contact,
     };
 
     // Grava como "já visto" independente de estar selecionado — é o que
@@ -99,17 +104,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ ok: true, ignorado: true });
     }
 
+    // Numa integração compartilhada, cada conta seleciona seus próprios
+    // identificadores (migration 047) — o mesmo external_id pode ter uma
+    // linha por conta. Normalmente só 1 bate; se mais de uma conta tiver
+    // selecionado o mesmo identificador, grava o lead pra cada uma.
     const { data: selecionados, error: erroSelecionados } = await supabaseAdmin
       .from('integration_selected_assets')
-      .select('external_id')
-      .eq('integration_id', integrationId);
+      .select('account_id')
+      .eq('integration_id', integrationId)
+      .eq('external_id', payload.event_identifier);
     if (erroSelecionados) throw new Error(erroSelecionados.message);
 
-    const selecionadoSet = new Set((selecionados ?? []).map((linha) => linha.external_id as string));
-    if (!selecionadoSet.has(payload.event_identifier)) {
-      // Ainda não selecionado — fica na fila de pendentes (não só a última
-      // ocorrência) até o usuário selecionar o identificador; save-assets.ts
-      // grava tudo o que estiver aqui na hora da seleção.
+    if (!selecionados || selecionados.length === 0) {
+      // Ainda não selecionado por nenhuma conta — fica na fila de pendentes
+      // (não só a última ocorrência) até alguém selecionar o identificador;
+      // save-assets.ts grava tudo o que estiver aqui na hora da seleção.
       const { error: erroPendente } = await supabaseAdmin.from('rd_station_pending_leads').insert({
         integration_id: integrationId,
         external_id: payload.event_identifier,
@@ -121,7 +130,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ ok: true, ignorado: true });
     }
 
-    await normalizarEGravarLeads(supabaseAdmin, [leadDoEvento], integracao?.account_id ?? null);
+    for (const selecionado of selecionados) {
+      const accountIdDoLead = (selecionado.account_id as string | null) ?? integracao?.account_id ?? null;
+      await normalizarEGravarLeads(supabaseAdmin, [leadDoEvento], accountIdDoLead);
+    }
 
     return res.status(200).json({ ok: true });
   } catch (erro) {

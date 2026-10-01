@@ -1,35 +1,39 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X } from 'lucide-react';
 import { AppLayout } from '@/components/shared/AppLayout';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Button } from '@/components/ui/button';
-import { ABAS_DASHBOARD, type AbaDashboard, type PeriodoDashboard } from '@/constants/dashboard.constants';
+import {
+  ABAS_DASHBOARD,
+  resolverSecoesGeral,
+  type AbaDashboard,
+  type PeriodoDashboard,
+  type SecaoGeral,
+} from '@/constants/dashboard.constants';
 import { useDashboardMetrics, type IntervaloPersonalizado } from '@/features/dashboard/hooks/useDashboardMetrics';
 import { useGlobalSyncStatus } from '@/features/settings/hooks/useGlobalSyncStatus';
 import { useAccounts } from '@/features/settings/hooks/useAccounts';
-import { SectionCards } from '@/features/dashboard/components/SectionCards';
+import { CardsDeAnalytics, CardsGeral, SectionCards } from '@/features/dashboard/components/SectionCards';
+import { AccountMultiSelect } from '@/features/dashboard/components/AccountMultiSelect';
+import {
+  CaminhosCard,
+  ComparativoPlataformasTable,
+  DispositivosTable,
+  LeadsPorFormularioTable,
+  OrigemMidiaTable,
+  TituloSecao,
+} from '@/features/dashboard/components/GeralSections';
 import { ChartAreaInteractive, type SerieDoGrafico } from '@/features/dashboard/components/ChartAreaInteractive';
 import { CampaignsTable } from '@/features/dashboard/components/CampaignsTable';
-import { AdSetsTable } from '@/features/dashboard/components/AdSetsTable';
-import { AdsTable } from '@/features/dashboard/components/AdsTable';
-import { TopPagesTable } from '@/features/dashboard/components/TopPagesTable';
-import { LeadsTable } from '@/features/dashboard/components/LeadsTable';
 import { PeriodPicker } from '@/features/dashboard/components/PeriodPicker';
 import { ExportPdfButton } from '@/features/export/components/ExportPdfButton';
 import { SyncAllButton } from '@/features/dashboard/components/SyncAllButton';
 import { formatarMoeda, formatarNumero } from '@/utils/formatters';
 
-// Sentinela só do valor do <Select> — o Radix Select não aceita null como
-// value. O estado de verdade (contaId) usa null para "Geral", igual ao
-// account_id nulo de uma integração compartilhada no banco.
-const SENTINELA_CONTA_GERAL = 'geral';
-
 export function DashboardPage() {
   const [aba, setAba] = useState<AbaDashboard>('geral');
   const [periodo, setPeriodo] = useState<PeriodoDashboard>('30d');
   const [intervaloPersonalizado, setIntervaloPersonalizado] = useState<IntervaloPersonalizado | null>(null);
-  const [contaId, setContaId] = useState<string | null>(null);
+  // null = todas as contas (padrão); lista = só essas, somadas.
+  const [contasSelecionadas, setContasSelecionadas] = useState<string[] | null>(null);
 
   const { accounts, carregando: carregandoContas } = useAccounts();
   // Conta desativada não aparece aqui pra seleção — some do dashboard, mas
@@ -39,16 +43,24 @@ export function DashboardPage() {
     () => accounts.filter((conta) => !conta.is_active).map((conta) => conta.id),
     [accounts]
   );
-  const contaSelecionada = contasAtivas.find((conta) => conta.id === contaId);
 
-  // Se a conta selecionada for desativada enquanto o dashboard está aberto
-  // (ou já vier desativada de uma sessão anterior), volta pra "Geral" em vez
-  // de continuar filtrando por uma conta que não deveria mais ser filtrável.
+  // Conta desativada enquanto o dashboard está aberto sai da seleção; se sobrar
+  // nenhuma, volta pra "todas" em vez de filtrar por contas que não deveriam
+  // mais ser filtráveis.
   useEffect(() => {
-    if (contaId && !contasAtivas.some((conta) => conta.id === contaId)) {
-      setContaId(null);
-    }
-  }, [contaId, contasAtivas]);
+    if (!contasSelecionadas) return;
+    const aindaAtivas = contasSelecionadas.filter((id) => contasAtivas.some((conta) => conta.id === id));
+    if (aindaAtivas.length === contasSelecionadas.length) return;
+    setContasSelecionadas(aindaAtivas.length > 0 ? aindaAtivas : null);
+  }, [contasSelecionadas, contasAtivas]);
+
+  const rotuloContas = useMemo(() => {
+    if (!contasSelecionadas) return undefined;
+    return contasAtivas
+      .filter((conta) => contasSelecionadas.includes(conta.id))
+      .map((conta) => conta.name)
+      .join(', ');
+  }, [contasSelecionadas, contasAtivas]);
 
   const {
     algumaIntegracaoAtiva,
@@ -64,27 +76,25 @@ export function DashboardPage() {
     metricasMidia,
     temDadosMidia,
     comparacaoMidia,
+    detalhamentoCusto,
+    comparacaoCustoDetalhado,
     metricasAnalytics,
     comparacaoAnalytics,
-    serieTemporalMidia,
+    serieCustoPorConversao,
     serieTemporalAnalytics,
     serieCustoPorLead,
     campanhas,
-    conjuntos,
-    anuncios,
-    selecao,
-    selecionarCampanha,
-    selecionarConjunto,
-    selecionarAnuncio,
-    limparSelecao,
-    paginas,
-    leadsRecentes,
+    dispositivos,
+    jornadaDoLead,
+    comparativoPlataformas,
     custoPorLead,
     custoPorLeadAnterior,
+    distribuicaoLeads,
+    linksFormularios,
     dataInicio,
     dataFim,
     recarregar,
-  } = useDashboardMetrics(aba, periodo, contaId ?? undefined, idsContasInativas, intervaloPersonalizado, !carregandoContas);
+  } = useDashboardMetrics(aba, periodo, contasSelecionadas ?? undefined, idsContasInativas, intervaloPersonalizado, !carregandoContas);
 
   const semIntegracaoConectada = !carregandoIntegracoes && !algumaIntegracaoAtiva;
   const mensagemVazio = semIntegracaoConectada
@@ -101,14 +111,10 @@ export function DashboardPage() {
     }
   };
 
-  const seriesMidia: SerieDoGrafico[] = [
-    { chave: 'cost', rotulo: 'Custo', cor: 'var(--series-1)', formatarValor: formatarMoeda },
-    { chave: 'conversions', rotulo: 'Conversões', cor: 'var(--series-2)', formatarValor: formatarNumero },
-  ];
-
-  const seriesAnalytics: SerieDoGrafico[] = [
-    { chave: 'sessions', rotulo: 'Sessões', cor: 'var(--series-1)', formatarValor: formatarNumero },
-    { chave: 'users', rotulo: 'Usuários', cor: 'var(--series-2)', formatarValor: formatarNumero },
+  // Custo por conversão (custo total ÷ conversões da plataforma) no eixo da esquerda e conversões por dia no da direita.
+  const seriesCustoPorConversao: SerieDoGrafico[] = [
+    { chave: 'cost_per_conversion', rotulo: 'Custo por conversão', cor: 'var(--series-1)', formatarValor: formatarMoeda },
+    { chave: 'conversions', rotulo: 'Conversões por dia', cor: 'var(--series-2)', formatarValor: formatarNumero, eixo: 'direita' },
   ];
 
   const seriesSessoesELeads: SerieDoGrafico[] = [
@@ -118,19 +124,102 @@ export function DashboardPage() {
 
   const seriesCustoPorLead: SerieDoGrafico[] = [
     { chave: 'cost_per_lead', rotulo: 'Custo por lead', cor: 'var(--series-1)', formatarValor: formatarMoeda },
+    { chave: 'leads', rotulo: 'Leads por dia', cor: 'var(--series-2)', formatarValor: formatarNumero, eixo: 'direita' },
   ];
 
-  const seriesCustoPorConversao: SerieDoGrafico[] = [
-    { chave: 'cpa', rotulo: 'Custo por conversão', cor: 'var(--series-1)', formatarValor: formatarMoeda },
-  ];
+  const secoesGeral = resolverSecoesGeral();
 
-  const mostraDrillDownDeMidia = aba === 'google_ads' || aba === 'meta_ads';
-  const algumaSelecaoAtiva = !!(selecao.campaignId || selecao.adsetId || selecao.adId);
+  const renderizarSecaoGeral = (secao: SecaoGeral) => {
+    switch (secao) {
+      case 'cards_midia':
+        return (
+          <CardsGeral
+            key={secao}
+            metricas={metricasMidia}
+            temDados={temDadosMidia}
+            comparacao={comparacaoMidia}
+            detalhamentoCusto={detalhamentoCusto}
+            comparacaoCustoDetalhado={comparacaoCustoDetalhado}
+            custoPorLead={custoPorLead}
+            custoPorLeadAnterior={custoPorLeadAnterior}
+            carregando={carregando}
+          />
+        );
+      case 'cards_analytics':
+        return <CardsDeAnalytics key={secao} metricas={metricasAnalytics} comparacao={comparacaoAnalytics} carregando={carregando} />;
+      case 'graficos':
+        return (
+          <div key={secao} className="grid grid-cols-1 gap-4">
+            <ChartAreaInteractive
+              titulo="Sessões e leads"
+              plataformas={['ga4', 'rd_station']}
+              descricao="Tendência no período selecionado"
+              dados={serieTemporalAnalytics}
+              series={seriesSessoesELeads}
+              carregando={carregando}
+            />
+            <ChartAreaInteractive
+              titulo="Custo por lead"
+              plataformas={['rd_station']}
+              descricao="Tendência no período selecionado"
+              dados={serieCustoPorLead}
+              series={seriesCustoPorLead}
+              carregando={carregando}
+            />
+          </div>
+        );
+      case 'grafico_sessoes_leads':
+        return (
+          <ChartAreaInteractive
+            key={secao}
+            titulo="Sessões e leads"
+            descricao="Tendência no período selecionado"
+            dados={serieTemporalAnalytics}
+            series={seriesSessoesELeads}
+            carregando={carregando}
+          />
+        );
+      case 'caminhos':
+        return <CaminhosCard key={secao} caminhos={jornadaDoLead.caminhos} carregando={carregando} />;
+      case 'leads_por_formulario':
+        return (
+          <section key={secao} className="flex flex-col gap-3">
+            <TituloSecao titulo="Leads por formulário" plataformas={['rd_station']} />
+            <LeadsPorFormularioTable itens={distribuicaoLeads.porFormulario} links={linksFormularios} carregando={carregando} mensagemVazio={mensagemVazio} />
+          </section>
+        );
+      case 'origem_midia':
+        return (
+          <section key={secao} className="flex flex-col gap-3">
+            <TituloSecao titulo="Origem/mídia" plataformas={['ga4']} />
+            <OrigemMidiaTable itens={jornadaDoLead.origens} carregando={carregando} mensagemVazio={mensagemVazio} />
+          </section>
+        );
+      case 'dispositivos':
+        return (
+          <section key={secao} className="flex flex-col gap-3">
+            <TituloSecao titulo="Sessões por dispositivo" plataformas={['ga4']} />
+            <DispositivosTable linhas={dispositivos} carregando={carregando} mensagemVazio={mensagemVazio} />
+          </section>
+        );
+      case 'comparativo_plataformas':
+        return (
+          <section key={secao} className="flex flex-col gap-3">
+            <TituloSecao titulo="Comparativo de plataformas" plataformas={['google_ads', 'meta_ads']} />
+            <ComparativoPlataformasTable linhas={comparativoPlataformas} carregando={carregando} mensagemVazio={mensagemVazio} />
+          </section>
+        );
+    }
+  };
 
   return (
     <AppLayout titulo="Dashboard">
       <div className="flex flex-col gap-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        {/* sticky logo abaixo do SiteHeader (h-14, também sticky) — margem
+            negativa cancela o padding do <main> nos 3 lados de cima (topo e
+            laterais), pra a barra ficar colada no header e encostada nas
+            bordas mesmo, sem espaço em branco entre os dois. */}
+        <div className="sticky top-14 z-30 -mx-4 -mt-4 flex flex-col gap-4 border-b bg-background/95 px-4 py-3 backdrop-blur sm:flex-row sm:items-center sm:justify-between md:-mx-6 md:-mt-6 md:px-6">
           <Tabs value={aba} onValueChange={(valor) => setAba(valor as AbaDashboard)}>
             <TabsList>
               {ABAS_DASHBOARD.map((item) => (
@@ -148,25 +237,18 @@ export function DashboardPage() {
               aoClicar={handleSincronizarTudo}
             />
 
-            <ExportPdfButton parametros={{ aba, accountId: contaId ?? undefined, accountName: contaSelecionada?.name, dataInicio, dataFim }} />
+            <ExportPdfButton
+              parametros={{
+                aba,
+                accountIds: contasSelecionadas ?? undefined,
+                accountName: rotuloContas,
+                dataInicio,
+                dataFim,
+              }}
+            />
 
             {contasAtivas.length > 1 && (
-              <Select
-                value={contaId ?? SENTINELA_CONTA_GERAL}
-                onValueChange={(valor) => setContaId(valor === SENTINELA_CONTA_GERAL ? null : valor)}
-              >
-                <SelectTrigger className="w-[140px] sm:w-[180px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={SENTINELA_CONTA_GERAL}>Geral (todas as contas)</SelectItem>
-                  {contasAtivas.map((conta) => (
-                    <SelectItem key={conta.id} value={conta.id}>
-                      {conta.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <AccountMultiSelect contas={contasAtivas} selecionadas={contasSelecionadas} aoAlterar={setContasSelecionadas} />
             )}
 
             <PeriodPicker
@@ -187,113 +269,38 @@ export function DashboardPage() {
           </div>
         )}
 
-        {mostraDrillDownDeMidia && algumaSelecaoAtiva && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span>Cards e gráfico filtrados pela seleção nas tabelas abaixo.</span>
-            <Button variant="ghost" size="sm" className="h-7 gap-1 px-2" onClick={limparSelecao}>
-              <X className="h-3 w-3" />
-              Limpar seleção
-            </Button>
-          </div>
-        )}
-
-        <SectionCards
-          aba={aba}
-          metricasMidia={metricasMidia}
-          temDadosMidia={temDadosMidia}
-          comparacaoMidia={comparacaoMidia}
-          metricasAnalytics={metricasAnalytics}
-          comparacaoAnalytics={comparacaoAnalytics}
-          custoPorLead={custoPorLead}
-          custoPorLeadAnterior={custoPorLeadAnterior}
-          carregando={carregando}
-        />
-
-        {aba === 'analytics' ? (
-          <ChartAreaInteractive
-            titulo="Sessões e usuários"
-            descricao={`Tendência no período selecionado`}
-            dados={serieTemporalAnalytics}
-            series={seriesAnalytics}
-            carregando={carregando}
-          />
-        ) : aba !== 'geral' ? (
-          <ChartAreaInteractive
-            titulo="Custo e conversões"
-            descricao="Tendência no período selecionado"
-            dados={serieTemporalMidia}
-            series={seriesMidia}
-            carregando={carregando}
-          />
+        {aba === 'geral' ? (
+          <div className="flex flex-col gap-6">{secoesGeral.map(renderizarSecaoGeral)}</div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <ChartAreaInteractive
-              titulo="Sessões e leads"
-              descricao="Tendência no período selecionado"
-              dados={serieTemporalAnalytics}
-              series={seriesSessoesELeads}
+          <>
+            <SectionCards
+              aba={aba}
+              metricasMidia={metricasMidia}
+              temDadosMidia={temDadosMidia}
+              comparacaoMidia={comparacaoMidia}
+              detalhamentoCusto={detalhamentoCusto}
+              comparacaoCustoDetalhado={comparacaoCustoDetalhado}
               carregando={carregando}
             />
-            <ChartAreaInteractive
-              titulo="Custo por lead"
-              descricao="Tendência no período selecionado"
-              dados={serieCustoPorLead}
-              series={seriesCustoPorLead}
-              carregando={carregando}
-            />
+
             <ChartAreaInteractive
               titulo="Custo por conversão"
               descricao="Tendência no período selecionado"
-              dados={serieTemporalMidia}
+              dados={serieCustoPorConversao}
               series={seriesCustoPorConversao}
               carregando={carregando}
             />
-          </div>
-        )}
 
-        {aba === 'geral' ? (
-          <div className="flex flex-col gap-3">
-            <h2 className="text-sm font-medium text-muted-foreground">Leads recentes</h2>
-            <LeadsTable leads={leadsRecentes} carregando={carregando} mensagemVazio={mensagemVazio} />
-          </div>
-        ) : aba === 'analytics' ? (
-          <div className="flex flex-col gap-3">
-            <h2 className="text-sm font-medium text-muted-foreground">Principais páginas</h2>
-            <TopPagesTable paginas={paginas} carregando={carregando} mensagemVazio={mensagemVazio} />
-          </div>
-        ) : (
-          <div className="flex flex-col gap-6">
             <div className="flex flex-col gap-3">
               <h2 className="text-sm font-medium text-muted-foreground">Campanhas</h2>
               <CampaignsTable
                 campanhas={campanhas}
                 carregando={carregando}
                 mensagemVazio={mensagemVazio}
-                campanhaSelecionadaId={selecao.campaignId}
-                aoSelecionarCampanha={selecionarCampanha}
+                modo={aba}
               />
             </div>
-            <div className="flex flex-col gap-3">
-              <h2 className="text-sm font-medium text-muted-foreground">Conjuntos de anúncio</h2>
-              <AdSetsTable
-                conjuntos={conjuntos}
-                carregando={carregando}
-                mensagemVazio="sem conjuntos de anúncio para mostrar"
-                conjuntoSelecionadoId={selecao.adsetId}
-                aoSelecionarConjunto={selecionarConjunto}
-              />
-            </div>
-            <div className="flex flex-col gap-3">
-              <h2 className="text-sm font-medium text-muted-foreground">Anúncios</h2>
-              <AdsTable
-                anuncios={anuncios}
-                carregando={carregando}
-                mensagemVazio="sem anúncios para mostrar"
-                anuncioSelecionadoId={selecao.adId}
-                aoSelecionarAnuncio={selecionarAnuncio}
-              />
-            </div>
-          </div>
+          </>
         )}
       </div>
     </AppLayout>

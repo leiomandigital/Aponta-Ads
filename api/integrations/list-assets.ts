@@ -22,15 +22,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(401).json({ error: 'Não autenticado' });
   }
 
-  const { integrationId } = req.body ?? {};
+  const { integrationId, accountId } = req.body ?? {};
   if (!integrationId || typeof integrationId !== 'string') {
     return res.status(400).json({ error: 'integrationId inválido' });
+  }
+  if (accountId !== undefined && accountId !== null && typeof accountId !== 'string') {
+    return res.status(400).json({ error: 'accountId inválido' });
   }
 
   const supabaseAdmin = criarSupabaseAdminClient();
   const { data: integracao, error: erroIntegracao } = await supabaseAdmin
     .from('integrations')
-    .select('key')
+    .select('key, account_id')
     .eq('id', integrationId)
     .maybeSingle();
 
@@ -60,10 +63,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .order('first_seen_at', { ascending: true });
       if (erroDescobertos) throw new Error(erroDescobertos.message);
 
-      const { data: linhasSelecionadas, error: erroSelecionadas } = await supabaseAdmin
-        .from('integration_selected_assets')
-        .select('external_id')
-        .eq('integration_id', integrationId);
+      // Numa integração compartilhada, cada conta tem sua PRÓPRIA seleção,
+      // independente das outras contas — por isso filtra por account_id.
+      // Numa integração exclusiva, a seleção sempre foi (e continua sendo)
+      // uma só, gravada com account_id null (migration 047).
+      const compartilhada = integracao.account_id === null;
+      const contaDoEscopo = compartilhada ? (accountId ?? null) : null;
+
+      let consultaSelecionados = supabaseAdmin.from('integration_selected_assets').select('external_id').eq('integration_id', integrationId);
+      consultaSelecionados = contaDoEscopo ? consultaSelecionados.eq('account_id', contaDoEscopo) : consultaSelecionados.is('account_id', null);
+      const { data: linhasSelecionadas, error: erroSelecionadas } = await consultaSelecionados;
       if (erroSelecionadas) throw new Error(erroSelecionadas.message);
 
       return res.status(200).json({

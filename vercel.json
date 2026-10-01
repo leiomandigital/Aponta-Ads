@@ -12,10 +12,10 @@
     }
   ],
   "functions": {
-    "api/sync/dispatch.ts": {
+    "api/sync/dispatch.js": {
       "maxDuration": 60
     },
-    "api/export/pdf.ts": {
+    "api/export/pdf.js": {
       "includeFiles": "node_modules/{@fontsource/montserrat/{package.json,files/montserrat-latin-400-normal.woff,files/montserrat-latin-700-normal.woff,files/montserrat-latin-800-normal.woff},pdfkit/package.json,pdfkit/js/standard-fonts/**}"
     }
   }

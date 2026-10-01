@@ -120,3 +120,24 @@ export interface AggregatedMetrics {
   cpc: number | null;
   cpa: number | null;
 }
+
+/** Lançamento manual de custo avulso (ex: sessão de fotos) — taxa da plataforma é calculada automaticamente, não lançada aqui. */
+export interface CampaignCostEntry {
+  id: string;
+  account_id: string | null;
+  /** 'todas' = lançamento dividido 50/50 entre Google Ads e Meta Ads (ver dashboardService.obterLancamentosDeCusto). */
+  platform: Platform | 'todas';
+  /** null = lançamento geral da plataforma/conta no período, não atribuído a uma campanha específica. */
+  campaign_id: string | null;
+  amount: number;
+  date: string;
+  description: string | null;
+  created_at: string;
+}
+
+/** Custo em cascata: mídia (automático) → +taxas da plataforma → +custos avulsos. */
+export interface CostBreakdown {
+  costMidia: number;
+  costComTaxas: number;
+  costTotal: number;
+}

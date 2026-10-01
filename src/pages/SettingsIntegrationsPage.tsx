@@ -10,6 +10,7 @@ import { AccountsSection } from '@/features/settings/components/AccountsSection'
 import { IntegrationCard } from '@/features/settings/components/IntegrationCard';
 import { NewIntegrationCard } from '@/features/settings/components/NewIntegrationCard';
 import { BrandSettingsSection } from '@/features/settings/components/BrandSettingsSection';
+import { CostEntriesSection } from '@/features/settings/components/CostEntriesSection';
 
 export function SettingsIntegrationsPage() {
   const {
@@ -131,6 +132,8 @@ export function SettingsIntegrationsPage() {
             )}
           </CardContent>
         </Card>
+
+        {contaSelecionadaId && <CostEntriesSection accountId={contaSelecionadaId} />}
 
         <BrandSettingsSection />
       </div>

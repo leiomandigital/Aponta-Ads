@@ -19,24 +19,26 @@ async function obterHeadersAutenticados(): Promise<Record<string, string>> {
 }
 
 export const assetsService = {
-  async listar(integrationId: string): Promise<ListarAtivosResposta> {
+  /** accountId só importa pro RD Station numa integração compartilhada — cada
+   * conta tem sua própria seleção (ver migration 047). Ignorado nas demais. */
+  async listar(integrationId: string, accountId: string | null): Promise<ListarAtivosResposta> {
     const headers = await obterHeadersAutenticados();
     const resposta = await fetch('/api/integrations/list-assets', {
       method: 'POST',
       headers,
-      body: JSON.stringify({ integrationId }),
+      body: JSON.stringify({ integrationId, accountId }),
     });
     const corpo = await resposta.json().catch(() => ({}));
     if (!resposta.ok) throw new Error(corpo.error ?? 'Falha ao listar ativos disponíveis');
     return corpo;
   },
 
-  async salvar(integrationId: string, selectedAssets: AtivoDisponivel[]): Promise<void> {
+  async salvar(integrationId: string, accountId: string | null, selectedAssets: AtivoDisponivel[]): Promise<void> {
     const headers = await obterHeadersAutenticados();
     const resposta = await fetch('/api/integrations/save-assets', {
       method: 'POST',
       headers,
-      body: JSON.stringify({ integrationId, selectedAssets }),
+      body: JSON.stringify({ integrationId, accountId, selectedAssets }),
     });
     if (!resposta.ok) {
       const corpo = await resposta.json().catch(() => ({}));

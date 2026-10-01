@@ -1,8 +1,9 @@
 import { criarSupabaseAdminClient } from '../../lib/supabaseAdminClient.js';
 import type { IntegrationConnector, SyncOptions, SyncResult } from '../types.js';
 import { obterCredenciais, refreshCredentialsIfNeeded } from './auth.js';
-import { buscarLeads, buscarSessoes, type GA4Row } from './fetch.js';
+import { buscarDetalhamentoLeads, buscarLeads, buscarSessoes, type GA4Row } from './fetch.js';
 import { normalizarEGravarSessoes } from './normalize.js';
+import { normalizarEGravarDetalhamentoLeads } from './normalizeBreakdown.js';
 
 const mensagemDe = (erro: unknown) => (erro instanceof Error ? erro.message : 'falha desconhecida');
 
@@ -22,12 +23,15 @@ async function sync(integrationId: string, accountId: string | null, options: Sy
     // paralelo evita somar a latência das duas. Leads é resgatado com
     // .then/.catch em vez de try/catch: se ela falhar, sessões (já resolvida
     // no mesmo Promise.all) continua gravando normalmente, como antes.
-    const [linhas, resultadoLeads] = await Promise.all([
+    const [linhas, resultadoLeads, resultadosDetalhamento] = await Promise.all([
       buscarSessoes(credenciais, options.sinceDate, options.untilDate),
       buscarLeads(credenciais, options.sinceDate, options.untilDate).then(
         (linhasLeads): { ok: true; linhasLeads: GA4Row[] } => ({ ok: true, linhasLeads }),
         (erro): { ok: false; erro: string } => ({ ok: false, erro: mensagemDe(erro) })
       ),
+      // Jornada do lead (caminho, origem, demografia, retorno, tempo): cada dimensão
+      // já isola a própria falha (ver fetch.ts) — nunca derruba sessões/leads.
+      buscarDetalhamentoLeads(credenciais, options.sinceDate, options.untilDate),
     ]);
 
     const linhasLeads = resultadoLeads.ok ? resultadoLeads.linhasLeads : undefined;
@@ -35,20 +39,26 @@ async function sync(integrationId: string, accountId: string | null, options: Sy
 
     const registrosGravados = await normalizarEGravarSessoes(supabaseAdmin, linhas, accountId, linhasLeads);
 
-    if (erroLeads) {
+    const detalhamento = await normalizarEGravarDetalhamentoLeads(supabaseAdmin, resultadosDetalhamento, accountId);
+    const errosDetalhamento = Object.values(detalhamento.detalhes).filter((valor) => valor.startsWith('error'));
+    const totalGravado = registrosGravados + detalhamento.gravados;
+
+    const details = {
+      analytics_sessions_daily: 'success',
+      analytics_leads: erroLeads ? `error: ${erroLeads}` : 'success',
+      ...detalhamento.detalhes,
+    };
+
+    if (erroLeads || errosDetalhamento.length > 0) {
       return {
         status: 'partial',
-        recordsSynced: registrosGravados,
-        errorMessage: erroLeads,
-        details: { analytics_sessions_daily: 'success', analytics_leads: `error: ${erroLeads}` },
+        recordsSynced: totalGravado,
+        errorMessage: erroLeads ?? errosDetalhamento[0],
+        details,
       };
     }
 
-    return {
-      status: 'success',
-      recordsSynced: registrosGravados,
-      details: { analytics_sessions_daily: 'success', analytics_leads: 'success' },
-    };
+    return { status: 'success', recordsSynced: totalGravado, details };
   } catch (erro) {
     const mensagem = mensagemDe(erro);
     return {

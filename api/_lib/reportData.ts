@@ -1,23 +1,31 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { agruparAnalyticsPorDia, agruparMidiaPorDia, calcularMetricasAgregadas } from '../../src/utils/metricsAggregation.js';
+import {
+  agruparAnalyticsPorDia,
+  agruparJornadaDoLead,
+  agruparMidiaPorDia,
+  agruparMidiaPorPlataforma,
+  agruparSessoesPorPaginaEDispositivo,
+  calcularMetricasAgregadas,
+  distribuirLeads,
+} from '../../src/utils/metricsAggregation.js';
 import type { AggregatedMetrics, DashboardSettings, LeadCostDaily, Platform } from '../../src/types/database.types.js';
 
 export interface FiltrosRelatorio {
   dataInicio: string;
   dataFim: string;
   platform?: Platform;
-  /** undefined = "Geral" (soma as contas ativas + as compartilhadas). Ver dashboardService.ts — mesma regra. */
-  accountId?: string;
+  /** undefined/vazio = todas (soma as contas ativas + as compartilhadas). Com ids = só essas contas. Ver dashboardService.ts — mesma regra. */
+  accountIds?: string[];
   /** Contas desativadas — excluídas da soma "Geral". Calculado no próprio pdf.ts, nunca recebido do cliente. */
   idsContasInativas?: string[];
 }
 
 function aplicarFiltroDeConta<T extends { or: (filtro: string) => T }>(
   consulta: T,
-  accountId: string | undefined,
+  accountIds: string[] | undefined,
   idsContasInativas: string[] = []
 ): T {
-  if (accountId) return consulta.or(`account_id.eq.${accountId},account_id.is.null`);
+  if (accountIds && accountIds.length > 0) return consulta.or(`account_id.in.(${accountIds.join(',')}),account_id.is.null`);
   if (idsContasInativas.length > 0) return consulta.or(`account_id.is.null,account_id.not.in.(${idsContasInativas.join(',')})`);
   return consulta;
 }
@@ -33,7 +41,7 @@ export async function buscarMetricasDeMidiaPaga(
     .lte('date', filtros.dataFim);
 
   if (filtros.platform) consulta = consulta.eq('platform', filtros.platform);
-  consulta = aplicarFiltroDeConta(consulta, filtros.accountId, filtros.idsContasInativas);
+  consulta = aplicarFiltroDeConta(consulta, filtros.accountIds, filtros.idsContasInativas);
 
   const { data, error } = await consulta;
   if (error) throw new Error(error.message);
@@ -48,7 +56,7 @@ export async function buscarSerieTemporalMidiaPaga(supabaseAdmin: SupabaseClient
     .lte('date', filtros.dataFim);
 
   if (filtros.platform) consulta = consulta.eq('platform', filtros.platform);
-  consulta = aplicarFiltroDeConta(consulta, filtros.accountId, filtros.idsContasInativas);
+  consulta = aplicarFiltroDeConta(consulta, filtros.accountIds, filtros.idsContasInativas);
 
   const { data, error } = await consulta;
   if (error) throw new Error(error.message);
@@ -57,7 +65,7 @@ export async function buscarSerieTemporalMidiaPaga(supabaseAdmin: SupabaseClient
 
 export async function buscarMetricasAnalytics(
   supabaseAdmin: SupabaseClient,
-  filtros: Pick<FiltrosRelatorio, 'dataInicio' | 'dataFim' | 'accountId' | 'idsContasInativas'>
+  filtros: Pick<FiltrosRelatorio, 'dataInicio' | 'dataFim' | 'accountIds' | 'idsContasInativas'>
 ): Promise<{ sessions: number; users: number; leads: number }> {
   let consulta = supabaseAdmin
     .from('analytics_sessions_daily')
@@ -65,7 +73,7 @@ export async function buscarMetricasAnalytics(
     .gte('date', filtros.dataInicio)
     .lte('date', filtros.dataFim);
 
-  consulta = aplicarFiltroDeConta(consulta, filtros.accountId, filtros.idsContasInativas);
+  consulta = aplicarFiltroDeConta(consulta, filtros.accountIds, filtros.idsContasInativas);
 
   const { data, error } = await consulta;
   if (error) throw new Error(error.message);
@@ -82,7 +90,7 @@ export async function buscarMetricasAnalytics(
 
 export async function buscarSerieTemporalAnalytics(
   supabaseAdmin: SupabaseClient,
-  filtros: Pick<FiltrosRelatorio, 'dataInicio' | 'dataFim' | 'accountId' | 'idsContasInativas'>
+  filtros: Pick<FiltrosRelatorio, 'dataInicio' | 'dataFim' | 'accountIds' | 'idsContasInativas'>
 ) {
   let consulta = supabaseAdmin
     .from('analytics_sessions_daily')
@@ -90,7 +98,7 @@ export async function buscarSerieTemporalAnalytics(
     .gte('date', filtros.dataInicio)
     .lte('date', filtros.dataFim);
 
-  consulta = aplicarFiltroDeConta(consulta, filtros.accountId, filtros.idsContasInativas);
+  consulta = aplicarFiltroDeConta(consulta, filtros.accountIds, filtros.idsContasInativas);
 
   const { data, error } = await consulta;
   if (error) throw new Error(error.message);
@@ -100,7 +108,7 @@ export async function buscarSerieTemporalAnalytics(
 /** Top 10 páginas por sessões — dá ao relatório de Analytics uma tabela própria, já que GA4 não tem "campanha". */
 export async function buscarSessoesPorPagina(
   supabaseAdmin: SupabaseClient,
-  filtros: Pick<FiltrosRelatorio, 'dataInicio' | 'dataFim' | 'accountId' | 'idsContasInativas'>
+  filtros: Pick<FiltrosRelatorio, 'dataInicio' | 'dataFim' | 'accountIds' | 'idsContasInativas'>
 ) {
   let consulta = supabaseAdmin
     .from('analytics_sessions_daily')
@@ -108,7 +116,7 @@ export async function buscarSessoesPorPagina(
     .gte('date', filtros.dataInicio)
     .lte('date', filtros.dataFim);
 
-  consulta = aplicarFiltroDeConta(consulta, filtros.accountId, filtros.idsContasInativas);
+  consulta = aplicarFiltroDeConta(consulta, filtros.accountIds, filtros.idsContasInativas);
 
   const { data, error } = await consulta;
   if (error) throw new Error(error.message);
@@ -134,7 +142,7 @@ export async function buscarSessoesPorPagina(
 // origem. Ver Data Security Skill, seção 2.
 export async function buscarCustoPorLeadPorOrigem(
   supabaseAdmin: SupabaseClient,
-  filtros: Pick<FiltrosRelatorio, 'dataInicio' | 'dataFim' | 'accountId' | 'idsContasInativas'>
+  filtros: Pick<FiltrosRelatorio, 'dataInicio' | 'dataFim' | 'accountIds' | 'idsContasInativas'>
 ): Promise<LeadCostDaily[]> {
   let consulta = supabaseAdmin
     .from('vw_lead_cost_daily')
@@ -143,7 +151,7 @@ export async function buscarCustoPorLeadPorOrigem(
     .lte('date', filtros.dataFim)
     .order('date', { ascending: false });
 
-  consulta = aplicarFiltroDeConta(consulta, filtros.accountId, filtros.idsContasInativas);
+  consulta = aplicarFiltroDeConta(consulta, filtros.accountIds, filtros.idsContasInativas);
 
   const { data, error } = await consulta;
   if (error) throw new Error(error.message);
@@ -158,7 +166,7 @@ export async function buscarCampanhas(supabaseAdmin: SupabaseClient, filtros: Fi
     .lte('date', filtros.dataFim);
 
   if (filtros.platform) consulta = consulta.eq('platform', filtros.platform);
-  consulta = aplicarFiltroDeConta(consulta, filtros.accountId, filtros.idsContasInativas);
+  consulta = aplicarFiltroDeConta(consulta, filtros.accountIds, filtros.idsContasInativas);
 
   const { data, error } = await consulta;
   if (error) throw new Error(error.message);
@@ -198,4 +206,85 @@ export async function buscarConfiguracoesDeMarca(supabaseAdmin: SupabaseClient):
   const { data, error } = await supabaseAdmin.from('dashboard_settings').select('*').limit(1).maybeSingle();
   if (error) throw new Error(error.message);
   return data;
+}
+
+/** Comparativo Google Ads × Meta Ads (Geral > Comparativo/Completo) — mesma agregação do dashboard. */
+export async function buscarComparativoPlataformas(supabaseAdmin: SupabaseClient, filtros: FiltrosRelatorio) {
+  let consulta = supabaseAdmin
+    .from('ad_performance_daily')
+    .select('platform, impressions, clicks, cost, conversions')
+    .gte('date', filtros.dataInicio)
+    .lte('date', filtros.dataFim);
+
+  consulta = aplicarFiltroDeConta(consulta, filtros.accountIds, filtros.idsContasInativas);
+
+  const { data, error } = await consulta;
+  if (error) throw new Error(error.message);
+  return agruparMidiaPorPlataforma(data ?? []);
+}
+
+/** Top páginas e sessões por dispositivo (Geral > Jornada/Completo). */
+export async function buscarPaginasEDispositivos(
+  supabaseAdmin: SupabaseClient,
+  filtros: Pick<FiltrosRelatorio, 'dataInicio' | 'dataFim' | 'accountIds' | 'idsContasInativas'>
+) {
+  let consulta = supabaseAdmin
+    .from('analytics_sessions_daily')
+    .select('sessions, users, page_path, device')
+    .gte('date', filtros.dataInicio)
+    .lte('date', filtros.dataFim);
+
+  consulta = aplicarFiltroDeConta(consulta, filtros.accountIds, filtros.idsContasInativas);
+
+  const { data, error } = await consulta;
+  if (error) throw new Error(error.message);
+  return agruparSessoesPorPaginaEDispositivo(data ?? []);
+}
+
+// Só contagem por origem/etapa/região — select nunca traz nome/e-mail.
+export async function buscarDistribuicaoDeLeads(
+  supabaseAdmin: SupabaseClient,
+  filtros: Pick<FiltrosRelatorio, 'dataInicio' | 'dataFim' | 'accountIds' | 'idsContasInativas'>
+) {
+  let consulta = supabaseAdmin
+    .from('leads')
+    .select('source, funnel_stage, region, event_identifier')
+    .gte('captured_at', filtros.dataInicio)
+    .lte('captured_at', `${filtros.dataFim}T23:59:59.999`)
+    .limit(5000);
+
+  consulta = aplicarFiltroDeConta(consulta, filtros.accountIds, filtros.idsContasInativas);
+
+  const { data, error } = await consulta;
+  if (error) throw new Error(error.message);
+  return distribuirLeads(data ?? []);
+}
+
+/** Jornada do lead do GA4 (Geral > Jornada do lead) — mesma agregação do dashboard, lida em páginas. */
+export async function buscarJornadaDoLead(
+  supabaseAdmin: SupabaseClient,
+  filtros: Pick<FiltrosRelatorio, 'dataInicio' | 'dataFim' | 'accountIds' | 'idsContasInativas'>
+) {
+  const TAMANHO_PAGINA = 1000;
+  const linhas: Array<{ kind: string; dim1: string | null; dim2: string | null; dim3: string | null; leads: number }> = [];
+
+  for (let inicio = 0; ; inicio += TAMANHO_PAGINA) {
+    let consulta = supabaseAdmin
+      .from('analytics_lead_breakdown_daily')
+      .select('kind, dim1, dim2, dim3, leads')
+      .gte('date', filtros.dataInicio)
+      .lte('date', filtros.dataFim)
+      .order('date')
+      .order('id')
+      .range(inicio, inicio + TAMANHO_PAGINA - 1);
+
+    consulta = aplicarFiltroDeConta(consulta, filtros.accountIds, filtros.idsContasInativas);
+
+    const { data, error } = await consulta;
+    if (error) throw new Error(error.message);
+    linhas.push(...(data ?? []));
+    if ((data ?? []).length < TAMANHO_PAGINA) break;
+  }
+
+  return agruparJornadaDoLead(linhas);
 }

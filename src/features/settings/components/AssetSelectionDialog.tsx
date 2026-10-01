@@ -18,15 +18,29 @@ interface AssetSelectionDialogProps {
   aberto: boolean;
   aoFechar: () => void;
   aoSalvarComSucesso: () => Promise<void>;
+  /** Conta atualmente em visualização na tela de Integrações. Só importa pro
+   * RD Station numa integração compartilhada: cada conta marca sua própria
+   * seleção, independente das outras (ver migration 047) — os leads dos
+   * identificadores marcados aqui passam a ser gravados nesta conta. */
+  contaEmVisualizacao?: string | null;
 }
 
 /**
  * Etapa 2 da conexão de GA4/RD Station: lista o que existe de verdade na
  * conta da plataforma e deixa escolher o que importar — nada é sincronizado
  * antes dessa escolha (ver assetSelection.ts no lado do servidor). Reaberta
- * a partir do IntegrationCard, a seleção pode ser editada a qualquer momento.
+ * a partir do IntegrationCard, a seleção pode ser editada a qualquer momento
+ * (e, numa integração compartilhada, é sempre a seleção da conta em
+ * visualização no momento — trocar de conta e reabrir mostra outra seleção).
  */
-export function AssetSelectionDialog({ integrationId, integrationKey, aberto, aoFechar, aoSalvarComSucesso }: AssetSelectionDialogProps) {
+export function AssetSelectionDialog({
+  integrationId,
+  integrationKey,
+  aberto,
+  aoFechar,
+  aoSalvarComSucesso,
+  contaEmVisualizacao = null,
+}: AssetSelectionDialogProps) {
   const [ativos, setAtivos] = useState<AtivoDisponivel[]>([]);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const [selecaoUnica, setSelecaoUnica] = useState(integrationKey === 'ga4');
@@ -39,7 +53,7 @@ export function AssetSelectionDialog({ integrationId, integrationKey, aberto, ao
     setCarregando(true);
     setErro(null);
     assetsService
-      .listar(integrationId)
+      .listar(integrationId, contaEmVisualizacao)
       .then((resposta) => {
         setAtivos(resposta.ativos);
         setSelecionados(new Set(resposta.selecionados));
@@ -47,7 +61,7 @@ export function AssetSelectionDialog({ integrationId, integrationKey, aberto, ao
       })
       .catch((erroCapturado) => setErro(erroCapturado instanceof Error ? erroCapturado.message : 'Erro ao listar ativos disponíveis'))
       .finally(() => setCarregando(false));
-  }, [aberto, integrationId]);
+  }, [aberto, integrationId, contaEmVisualizacao]);
 
   const alternar = (externalId: string) => {
     setSelecionados((anteriores) => {
@@ -67,7 +81,7 @@ export function AssetSelectionDialog({ integrationId, integrationKey, aberto, ao
     setErro(null);
     try {
       const escolhidos = ativos.filter((ativo) => selecionados.has(ativo.externalId));
-      await assetsService.salvar(integrationId, escolhidos);
+      await assetsService.salvar(integrationId, contaEmVisualizacao, escolhidos);
       await aoSalvarComSucesso();
     } catch (erroCapturado) {
       setErro(erroCapturado instanceof Error ? erroCapturado.message : 'Erro ao salvar seleção de ativos');

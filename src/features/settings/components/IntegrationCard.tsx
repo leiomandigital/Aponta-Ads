@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Loader2, RefreshCw, ListChecks, History, HelpCircle } from 'lucide-react';
+import { Loader2, RefreshCw, ListChecks, History, HelpCircle, Link2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { CredentialsDialog } from './CredentialsDialog';
 import { AssetSelectionDialog } from './AssetSelectionDialog';
 import { SyncHistoryDialog } from './SyncHistoryDialog';
+import { RdStationFormLinksDialog } from './RdStationFormLinksDialog';
 import { formatarDataHora } from '@/utils/formatters';
 import type { Integration, IntegrationStatus } from '@/types/database.types';
 
@@ -42,6 +43,7 @@ export function IntegrationCard({
   const [dialogoAberto, setDialogoAberto] = useState(false);
   const [dialogoAtivosAberto, setDialogoAtivosAberto] = useState(false);
   const [dialogoHistoricoAberto, setDialogoHistoricoAberto] = useState(false);
+  const [dialogoLinksAberto, setDialogoLinksAberto] = useState(false);
   const status = ROTULO_STATUS[integration.status];
   const compartilhada = integration.account_id === null;
   // Só a conta que marcou como compartilhada pode desmarcar — nas demais o
@@ -93,6 +95,11 @@ export function IntegrationCard({
               <ListChecks className="h-4 w-4" />
             </Button>
           )}
+          {integration.key === 'rd_station' && integration.status !== 'disconnected' && (
+            <Button variant="ghost" size="icon" onClick={() => setDialogoLinksAberto(true)} title="Links dos formulários">
+              <Link2 className="h-4 w-4" />
+            </Button>
+          )}
           {integration.status !== 'disconnected' && (
             <Button variant="ghost" size="icon" onClick={aoSincronizarAgora} disabled={sincronizando} title="Sincronizar agora">
               {sincronizando ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
@@ -131,6 +138,7 @@ export function IntegrationCard({
             setDialogoAtivosAberto(false);
             await aoRecarregar();
           }}
+          contaEmVisualizacao={accountId}
         />
       )}
 
@@ -139,6 +147,14 @@ export function IntegrationCard({
         aberto={dialogoHistoricoAberto}
         aoFechar={() => setDialogoHistoricoAberto(false)}
       />
+
+      {integration.key === 'rd_station' && (
+        <RdStationFormLinksDialog
+          integrationId={integration.id}
+          aberto={dialogoLinksAberto}
+          aoFechar={() => setDialogoLinksAberto(false)}
+        />
+      )}
     </Card>
   );
 }

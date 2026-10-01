@@ -1,45 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { dashboardService } from '../services/dashboardService';
 import type { PaginaLinha } from '../components/TopPagesTable';
-import type { CampanhaLinha } from '../components/CampaignsTable';
-import type { ConjuntoLinha } from '../components/AdSetsTable';
-import type { AnuncioLinha } from '../components/AdsTable';
 import { PERIODOS_DASHBOARD, type AbaDashboard, type PeriodoDashboard } from '@/constants/dashboard.constants';
 import {
-  agruparCustoPorLeadPorDia,
-  agruparMidiaPorChave,
-  agruparMidiaPorDia,
-  calcularMetricasAgregadas,
+  agruparAnalyticsPorDia,
+  agruparCustoPorOrigem,
+  agruparSessoesPorPaginaEDispositivo,
+  calcularPeriodoAnterior,
   compararComPeriodoAnterior,
+  DISTRIBUICAO_VAZIA,
+  JORNADA_VAZIA,
+  somarTotaisAnalytics,
+  type DistribuicaoDeLeads,
+  type JornadaDoLead,
+  type LinhaDispositivoAgregada,
 } from '@/utils/metricsAggregation';
-import type { AggregatedMetrics, LeadCostDaily, Platform, Region } from '@/types/database.types';
-
-interface LinhaMidiaBruta {
-  date: string;
-  platform: string;
-  campaign_id: string;
-  campaign_name: string | null;
-  adset_id: string | null;
-  adset_name: string | null;
-  ad_id: string | null;
-  ad_name: string | null;
-  impressions: number;
-  clicks: number;
-  cost: number;
-  conversions: number;
-}
-
-interface PontoSerieMidia {
-  date: string;
-  impressions: number;
-  clicks: number;
-  cost: number;
-  conversions: number;
-  cpm: number | null;
-  ctr: number | null;
-  cpc: number | null;
-  cpa: number | null;
-}
+import { calcularPainelDeMidia, calcularSerieCustoPorConversao, calcularSerieCustoPorLead, type LinhaMidiaBruta } from '@/utils/painelCalculos';
+import type { CampaignCostEntry, LeadCostDaily, Platform, Region } from '@/types/database.types';
 
 interface PontoSerieAnalytics {
   date: string;
@@ -65,15 +42,6 @@ interface LeadRecente {
   captured_at: string | null;
 }
 
-/** Seleção em cascata das tabelas de mídia: campanha → conjunto de anúncio → anúncio. */
-export interface SelecaoMidia {
-  campaignId: string | null;
-  adsetId: string | null;
-  adId: string | null;
-}
-
-const SELECAO_VAZIA: SelecaoMidia = { campaignId: null, adsetId: null, adId: null };
-
 export interface IntervaloPersonalizado {
   inicio: Date;
   fim: Date;
@@ -97,54 +65,13 @@ function calcularIntervaloData(periodo: PeriodoDashboard, intervaloPersonalizado
   };
 }
 
-/** Mesmo número de dias do período atual, imediatamente antes dele — usado na comparação dos cards. */
-function calcularPeriodoAnterior(dataInicio: string, dataFim: string) {
-  const inicio = new Date(`${dataInicio}T00:00:00`);
-  const fim = new Date(`${dataFim}T00:00:00`);
-  const duracaoDias = Math.round((fim.getTime() - inicio.getTime()) / 86400000) + 1;
-
-  const fimAnterior = new Date(inicio);
-  fimAnterior.setDate(fimAnterior.getDate() - 1);
-  const inicioAnterior = new Date(fimAnterior);
-  inicioAnterior.setDate(inicioAnterior.getDate() - (duracaoDias - 1));
-
-  return {
-    dataInicio: inicioAnterior.toISOString().slice(0, 10),
-    dataFim: fimAnterior.toISOString().slice(0, 10),
-  };
-}
-
-const chaveCampanha = (linha: LinhaMidiaBruta) => `${linha.platform}:${linha.campaign_id}`;
-const chaveConjunto = (linha: LinhaMidiaBruta) => `${linha.campaign_id}:${linha.adset_id}`;
-const chaveAnuncio = (linha: LinhaMidiaBruta) => `${linha.campaign_id}:${linha.adset_id}:${linha.ad_id}`;
-
-function filtrarPelaSelecao(linhas: LinhaMidiaBruta[], selecao: SelecaoMidia): LinhaMidiaBruta[] {
-  return linhas.filter((linha) => {
-    if (selecao.campaignId && chaveCampanha(linha) !== selecao.campaignId) return false;
-    if (selecao.adsetId && chaveConjunto(linha) !== selecao.adsetId) return false;
-    if (selecao.adId && chaveAnuncio(linha) !== selecao.adId) return false;
-    return true;
-  });
-}
-
-function comparacaoDeMetricas(atual: AggregatedMetrics, anterior: AggregatedMetrics) {
-  return {
-    impressions: compararComPeriodoAnterior(atual.impressions, anterior.impressions),
-    clicks: compararComPeriodoAnterior(atual.clicks, anterior.clicks),
-    cost: compararComPeriodoAnterior(atual.cost, anterior.cost),
-    conversions: compararComPeriodoAnterior(atual.conversions, anterior.conversions),
-    cpm: compararComPeriodoAnterior(atual.cpm ?? 0, anterior.cpm ?? 0),
-    ctr: compararComPeriodoAnterior(atual.ctr ?? 0, anterior.ctr ?? 0),
-    cpc: compararComPeriodoAnterior(atual.cpc ?? 0, anterior.cpc ?? 0),
-  };
-}
 
 export function useDashboardMetrics(
   aba: AbaDashboard,
   periodo: PeriodoDashboard,
-  /** undefined = "Geral", soma todas as contas ativas (mais as compartilhadas). */
-  accountId: string | undefined,
-  /** Contas desativadas — excluídas da soma "Geral" (ver dashboardService.ts). Irrelevante quando accountId é informado (só contas ativas aparecem pra seleção). */
+  /** undefined = todas as contas ativas (mais as compartilhadas). Com ids = só essas contas somadas. Precisa ser estável (useMemo) — entra nas dependências da busca. */
+  accountIds: string[] | undefined,
+  /** Contas desativadas — excluídas da soma "todas" (ver dashboardService.ts). Irrelevante quando accountIds é informado (só contas ativas aparecem pra seleção). */
   idsContasInativas: string[] = [],
   intervaloPersonalizado: IntervaloPersonalizado | null = null,
   /**
@@ -165,11 +92,16 @@ export function useDashboardMetrics(
   const [metricasAnalyticsAnterior, setMetricasAnalyticsAnterior] = useState<MetricasAnalytics | null>(null);
   const [serieTemporalAnalytics, setSerieTemporalAnalytics] = useState<PontoSerieAnalytics[]>([]);
   const [paginas, setPaginas] = useState<PaginaLinha[]>([]);
+  const [jornadaDoLead, setJornadaDoLead] = useState<JornadaDoLead>(JORNADA_VAZIA);
+  const [dispositivos, setDispositivos] = useState<LinhaDispositivoAgregada[]>([]);
+  const [distribuicaoLeads, setDistribuicaoLeads] = useState<DistribuicaoDeLeads>(DISTRIBUICAO_VAZIA);
+  const [linksFormularios, setLinksFormularios] = useState<Record<string, string>>({});
+  const [distribuicaoLeadsAnterior, setDistribuicaoLeadsAnterior] = useState<DistribuicaoDeLeads>(DISTRIBUICAO_VAZIA);
   const [leadsRecentes, setLeadsRecentes] = useState<LeadRecente[]>([]);
   const [custoPorLead, setCustoPorLead] = useState<LeadCostDaily[]>([]);
   const [custoPorLeadAnterior, setCustoPorLeadAnterior] = useState<LeadCostDaily[]>([]);
-
-  const [selecao, setSelecao] = useState<SelecaoMidia>(SELECAO_VAZIA);
+  const [lancamentosCustoAtual, setLancamentosCustoAtual] = useState<CampaignCostEntry[]>([]);
+  const [lancamentosCustoAnterior, setLancamentosCustoAnterior] = useState<CampaignCostEntry[]>([]);
 
   const { dataInicio, dataFim } = useMemo(
     () => calcularIntervaloData(periodo, intervaloPersonalizado),
@@ -181,12 +113,6 @@ export function useDashboardMetrics(
   );
   const platform: Platform | undefined = aba === 'google_ads' || aba === 'meta_ads' ? aba : undefined;
 
-  // Trocar de aba muda o universo de campanhas (ou some com a tabela de mídia,
-  // caso de Analytics/Geral) — uma seleção antiga não faz mais sentido.
-  useEffect(() => {
-    setSelecao(SELECAO_VAZIA);
-  }, [aba]);
-
   const buscar = useCallback(async () => {
     if (!pronto) return; // espera useAccounts() carregar — ver comentário do parâmetro acima
 
@@ -194,94 +120,133 @@ export function useDashboardMetrics(
     setErro(null);
 
     try {
-      const filtrosMidia = { dataInicio, dataFim, platform, accountId, idsContasInativas };
-      const filtrosMidiaAnterior = { dataInicio: dataInicioAnterior, dataFim: dataFimAnterior, platform, accountId, idsContasInativas };
-      const filtrosAnalytics = { dataInicio, dataFim, accountId, idsContasInativas };
-      const filtrosAnalyticsAnterior = { dataInicio: dataInicioAnterior, dataFim: dataFimAnterior, accountId, idsContasInativas };
+      const filtrosMidia = { dataInicio, dataFim, platform, accountIds, idsContasInativas };
+      const filtrosMidiaAnterior = { dataInicio: dataInicioAnterior, dataFim: dataFimAnterior, platform, accountIds, idsContasInativas };
+      const filtrosAnalytics = { dataInicio, dataFim, accountIds, idsContasInativas };
+      const filtrosAnalyticsAnterior = { dataInicio: dataInicioAnterior, dataFim: dataFimAnterior, accountIds, idsContasInativas };
 
-      const buscaAnalytics = aba === 'analytics' || aba === 'geral';
-      const buscaMidia = aba !== 'analytics';
+      const buscaAnalytics = aba === 'geral';
+      const buscaMidia = true;
+      const buscaGeral = aba === 'geral';
+
+      // Uma busca só, em paralelo: nenhuma dessas consultas depende do
+      // resultado de outra, então rodar em blocos sequenciais (como era
+      // antes) só somava a latência de rede de cada bloco em vez de pagar só
+      // a mais lenta. linhasAnalytics também é reaproveitada localmente pra
+      // totais/série/páginas/dispositivos, que antes refaziam essa mesma
+      // consulta cada um por conta própria.
+      const [
+        linhasAnalytics,
+        linhasAnalyticsAnteriores,
+        jornada,
+        linhasMidia,
+        linhasMidiaAnteriores,
+        lancamentos,
+        lancamentosAnteriores,
+        leads,
+        distribuicao,
+        distribuicaoAnterior,
+        custo,
+        custoAnterior,
+        links,
+      ] = await Promise.all([
+        buscaAnalytics ? dashboardService.obterLinhasDeAnalytics(filtrosAnalytics) : Promise.resolve([]),
+        buscaAnalytics ? dashboardService.obterLinhasDeAnalytics(filtrosAnalyticsAnterior) : Promise.resolve([]),
+        buscaGeral ? dashboardService.obterJornadaDoLead(filtrosAnalytics) : Promise.resolve(JORNADA_VAZIA),
+        buscaMidia ? dashboardService.obterLinhasDeMidia(filtrosMidia) : Promise.resolve([]),
+        buscaMidia ? dashboardService.obterLinhasDeMidia(filtrosMidiaAnterior) : Promise.resolve([]),
+        buscaMidia ? dashboardService.obterLancamentosDeCusto(filtrosMidia) : Promise.resolve([]),
+        buscaMidia ? dashboardService.obterLancamentosDeCusto(filtrosMidiaAnterior) : Promise.resolve([]),
+        buscaGeral ? dashboardService.obterLeadsRecentes(filtrosAnalytics) : Promise.resolve([]),
+        buscaGeral ? dashboardService.obterDistribuicaoDeLeads(filtrosAnalytics) : Promise.resolve(DISTRIBUICAO_VAZIA),
+        buscaGeral ? dashboardService.obterDistribuicaoDeLeads(filtrosAnalyticsAnterior) : Promise.resolve(DISTRIBUICAO_VAZIA),
+        buscaGeral ? dashboardService.obterCustoPorLeadPorOrigem(filtrosAnalytics) : Promise.resolve([]),
+        buscaGeral ? dashboardService.obterCustoPorLeadPorOrigem(filtrosAnalyticsAnterior) : Promise.resolve([]),
+        buscaGeral ? dashboardService.obterLinksDeFormularios() : Promise.resolve({} as Record<string, string>),
+      ]);
 
       if (buscaAnalytics) {
-        const [metricas, metricasAnteriores, serie] = await Promise.all([
-          dashboardService.obterMetricasAnalytics(filtrosAnalytics),
-          dashboardService.obterMetricasAnalytics(filtrosAnalyticsAnterior),
-          dashboardService.obterSerieTemporalAnalytics(filtrosAnalytics),
-        ]);
-        setMetricasAnalyticsAtual(metricas);
-        setMetricasAnalyticsAnterior(metricasAnteriores);
-        setSerieTemporalAnalytics(serie);
+        setMetricasAnalyticsAtual(somarTotaisAnalytics(linhasAnalytics));
+        setMetricasAnalyticsAnterior(somarTotaisAnalytics(linhasAnalyticsAnteriores));
+        setSerieTemporalAnalytics(agruparAnalyticsPorDia(linhasAnalytics));
       } else {
         setMetricasAnalyticsAtual(null);
         setMetricasAnalyticsAnterior(null);
         setSerieTemporalAnalytics([]);
       }
 
-      if (aba === 'analytics') {
-        setPaginas(await dashboardService.obterPrincipaisPaginas(filtrosAnalytics));
+      if (buscaGeral) {
+        const detalhes = agruparSessoesPorPaginaEDispositivo(linhasAnalytics);
+        setPaginas(detalhes.paginas);
+        setDispositivos(detalhes.dispositivos);
+        setJornadaDoLead(jornada);
       } else {
         setPaginas([]);
+        setDispositivos([]);
+        setJornadaDoLead(JORNADA_VAZIA);
       }
 
       if (buscaMidia) {
-        const [linhas, linhasAnteriores] = await Promise.all([
-          dashboardService.obterLinhasDeMidia(filtrosMidia),
-          dashboardService.obterLinhasDeMidia(filtrosMidiaAnterior),
-        ]);
-        setLinhasMidiaAtual(linhas);
-        setLinhasMidiaAnterior(linhasAnteriores);
+        setLinhasMidiaAtual(linhasMidia);
+        setLinhasMidiaAnterior(linhasMidiaAnteriores);
+        setLancamentosCustoAtual(lancamentos);
+        setLancamentosCustoAnterior(lancamentosAnteriores);
       } else {
         setLinhasMidiaAtual([]);
         setLinhasMidiaAnterior([]);
+        setLancamentosCustoAtual([]);
+        setLancamentosCustoAnterior([]);
       }
 
-      if (aba === 'geral') {
-        const [leads, custo, custoAnterior] = await Promise.all([
-          dashboardService.obterLeadsRecentes({ dataInicio, dataFim, accountId, idsContasInativas }),
-          dashboardService.obterCustoPorLeadPorOrigem({ dataInicio, dataFim, accountId, idsContasInativas }),
-          dashboardService.obterCustoPorLeadPorOrigem({
-            dataInicio: dataInicioAnterior,
-            dataFim: dataFimAnterior,
-            accountId,
-            idsContasInativas,
-          }),
-        ]);
+      if (buscaGeral) {
         setLeadsRecentes(leads);
+        setDistribuicaoLeads(distribuicao);
+        setDistribuicaoLeadsAnterior(distribuicaoAnterior);
         setCustoPorLead(custo);
         setCustoPorLeadAnterior(custoAnterior);
+        setLinksFormularios(links);
       } else {
         setLeadsRecentes([]);
+        setDistribuicaoLeads(DISTRIBUICAO_VAZIA);
+        setDistribuicaoLeadsAnterior(DISTRIBUICAO_VAZIA);
         setCustoPorLead([]);
         setCustoPorLeadAnterior([]);
+        setLinksFormularios({});
       }
     } catch (erroCapturado) {
       setErro(erroCapturado instanceof Error ? erroCapturado.message : 'Erro ao carregar o dashboard');
     } finally {
       setCarregando(false);
     }
-  }, [aba, dataInicio, dataFim, dataInicioAnterior, dataFimAnterior, platform, accountId, idsContasInativas, pronto]);
+  }, [aba, dataInicio, dataFim, dataInicioAnterior, dataFimAnterior, platform, accountIds, idsContasInativas, pronto]);
 
   useEffect(() => {
     buscar();
   }, [buscar]);
 
-  // Cards, gráfico e comparação respeitam a seleção em cascata; as tabelas
-  // de nível abaixo (conjunto/anúncio) também, e a seleção nunca precisa de
-  // nova consulta ao banco — tudo deriva das mesmas linhas já carregadas.
-  const linhasFiltradasAtual = useMemo(() => filtrarPelaSelecao(linhasMidiaAtual, selecao), [linhasMidiaAtual, selecao]);
-  const linhasFiltradasAnterior = useMemo(() => filtrarPelaSelecao(linhasMidiaAnterior, selecao), [linhasMidiaAnterior, selecao]);
+  const painelMidia = useMemo(
+    () =>
+      calcularPainelDeMidia({
+        linhasAtual: linhasMidiaAtual,
+        linhasAnterior: linhasMidiaAnterior,
+        lancamentosAtual: lancamentosCustoAtual,
+        lancamentosAnterior: lancamentosCustoAnterior,
+      }),
+    [linhasMidiaAtual, linhasMidiaAnterior, lancamentosCustoAtual, lancamentosCustoAnterior]
+  );
+  const { metricasMidia, temDadosMidia, comparacaoMidia, detalhamentoCusto, comparacaoCustoDetalhado, comparativoPlataformas, campanhas } =
+    painelMidia;
 
-  const metricasMidia = useMemo(() => calcularMetricasAgregadas(linhasFiltradasAtual), [linhasFiltradasAtual]);
-  const temDadosMidia = linhasFiltradasAtual.length > 0;
-  const metricasMidiaAnterior = useMemo(() => calcularMetricasAgregadas(linhasFiltradasAnterior), [linhasFiltradasAnterior]);
-  const comparacaoMidia = useMemo(
-    () => comparacaoDeMetricas(metricasMidia, metricasMidiaAnterior),
-    [metricasMidia, metricasMidiaAnterior]
+  const serieCustoPorConversao = useMemo(
+    () => calcularSerieCustoPorConversao(linhasMidiaAtual, lancamentosCustoAtual, dataInicio, dataFim),
+    [linhasMidiaAtual, lancamentosCustoAtual, dataInicio, dataFim]
   );
 
-  const serieTemporalMidia = useMemo<PontoSerieMidia[]>(() => agruparMidiaPorDia(linhasFiltradasAtual), [linhasFiltradasAtual]);
-
-  const serieCustoPorLead = useMemo(() => agruparCustoPorLeadPorDia(custoPorLead), [custoPorLead]);
+  const serieCustoPorLead = useMemo(
+    () => calcularSerieCustoPorLead(custoPorLead, linhasMidiaAtual, lancamentosCustoAtual, dataInicio, dataFim),
+    [custoPorLead, linhasMidiaAtual, lancamentosCustoAtual, dataInicio, dataFim]
+  );
+  const custoPorOrigem = useMemo(() => agruparCustoPorOrigem(custoPorLead), [custoPorLead]);
 
   const comparacaoAnalytics = useMemo(() => {
     if (!metricasAnalyticsAtual || !metricasAnalyticsAnterior) return null;
@@ -292,81 +257,29 @@ export function useDashboardMetrics(
     };
   }, [metricasAnalyticsAtual, metricasAnalyticsAnterior]);
 
-  const campanhas = useMemo<CampanhaLinha[]>(
-    () =>
-      agruparMidiaPorChave(linhasMidiaAtual, chaveCampanha, (linha) => ({
-        campaign_id: linha.campaign_id,
-        campaign_name: linha.campaign_name,
-        platform: linha.platform,
-      })).sort((a, b) => b.cost - a.cost) as unknown as CampanhaLinha[],
-    [linhasMidiaAtual]
-  );
-
-  const conjuntos = useMemo<ConjuntoLinha[]>(() => {
-    const base = linhasMidiaAtual.filter(
-      (linha) => linha.adset_id && (!selecao.campaignId || chaveCampanha(linha) === selecao.campaignId)
-    );
-    return agruparMidiaPorChave(base, chaveConjunto, (linha) => ({
-      campaign_id: linha.campaign_id,
-      adset_id: linha.adset_id,
-      adset_name: linha.adset_name,
-    })).sort((a, b) => b.cost - a.cost) as unknown as ConjuntoLinha[];
-  }, [linhasMidiaAtual, selecao.campaignId]);
-
-  const anuncios = useMemo<AnuncioLinha[]>(() => {
-    const base = linhasMidiaAtual.filter(
-      (linha) =>
-        linha.ad_id &&
-        (!selecao.campaignId || chaveCampanha(linha) === selecao.campaignId) &&
-        (!selecao.adsetId || chaveConjunto(linha) === selecao.adsetId)
-    );
-    return agruparMidiaPorChave(base, chaveAnuncio, (linha) => ({
-      campaign_id: linha.campaign_id,
-      adset_id: linha.adset_id,
-      ad_id: linha.ad_id,
-      ad_name: linha.ad_name,
-    })).sort((a, b) => b.cost - a.cost) as unknown as AnuncioLinha[];
-  }, [linhasMidiaAtual, selecao.campaignId, selecao.adsetId]);
-
-  const selecionarCampanha = useCallback((campanha: CampanhaLinha) => {
-    const id = chaveCampanha({ platform: campanha.platform, campaign_id: campanha.campaign_id } as LinhaMidiaBruta);
-    setSelecao((atual) => (atual.campaignId === id ? SELECAO_VAZIA : { campaignId: id, adsetId: null, adId: null }));
-  }, []);
-
-  const selecionarConjunto = useCallback((conjunto: ConjuntoLinha) => {
-    const id = chaveConjunto({ campaign_id: conjunto.campaign_id, adset_id: conjunto.adset_id } as LinhaMidiaBruta);
-    setSelecao((atual) => (atual.adsetId === id ? { ...atual, adsetId: null, adId: null } : { ...atual, adsetId: id, adId: null }));
-  }, []);
-
-  const selecionarAnuncio = useCallback((anuncio: AnuncioLinha) => {
-    const id = chaveAnuncio({ campaign_id: anuncio.campaign_id, adset_id: anuncio.adset_id, ad_id: anuncio.ad_id } as LinhaMidiaBruta);
-    setSelecao((atual) => (atual.adId === id ? { ...atual, adId: null } : { ...atual, adId: id }));
-  }, []);
-
-  const limparSelecao = useCallback(() => setSelecao(SELECAO_VAZIA), []);
-
   return {
     carregando,
     erro,
     metricasMidia,
-    metricasMidiaAnterior,
     temDadosMidia,
     comparacaoMidia,
+    detalhamentoCusto,
+    comparacaoCustoDetalhado,
     metricasAnalytics: metricasAnalyticsAtual,
     metricasAnalyticsAnterior,
     comparacaoAnalytics,
-    serieTemporalMidia,
+    serieCustoPorConversao,
     serieTemporalAnalytics,
     serieCustoPorLead,
     campanhas,
-    conjuntos,
-    anuncios,
-    selecao,
-    selecionarCampanha,
-    selecionarConjunto,
-    selecionarAnuncio,
-    limparSelecao,
     paginas,
+    dispositivos,
+    jornadaDoLead,
+    distribuicaoLeads,
+    distribuicaoLeadsAnterior,
+    linksFormularios,
+    custoPorOrigem,
+    comparativoPlataformas,
     leadsRecentes,
     custoPorLead,
     custoPorLeadAnterior,

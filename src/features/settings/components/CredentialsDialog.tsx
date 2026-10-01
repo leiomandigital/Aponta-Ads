@@ -122,6 +122,7 @@ export function CredentialsDialog({
           await aoSalvarComSucesso();
           aoFechar();
         }}
+        contaEmVisualizacao={accountId}
       />
     );
   }

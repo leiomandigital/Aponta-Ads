@@ -42,3 +42,15 @@ export function formatarDataHora(data: string | Date | null | undefined): string
   if (Number.isNaN(dataObj.getTime())) return '—';
   return formatadorDataHora.format(dataObj);
 }
+
+// Links de formulário do RD Station são salvos completos (ver
+// integration_discovered_assets.link_url), mas telas como "Leads por
+// formulário" mostram só o path (ex.: "/df-cotacao"), sem o domínio.
+export function extrairPathDaUrl(url: string | null | undefined): string {
+  if (!url) return '—';
+  try {
+    return new URL(url).pathname || '/';
+  } catch {
+    return url; // não era uma URL válida — mostra o que tiver, não quebra a tela.
+  }
+}

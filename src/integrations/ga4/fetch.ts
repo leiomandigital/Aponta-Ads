@@ -29,7 +29,8 @@ async function executarRelatorio(
   untilDate: string,
   metricas: Array<{ name: string }>,
   rotulo: string,
-  filtroDimensao?: Record<string, unknown>
+  filtroDimensao?: Record<string, unknown>,
+  dimensoes: Array<{ name: string }> = DIMENSOES
 ): Promise<GA4Row[]> {
   const linhas: GA4Row[] = [];
   let offset = 0;
@@ -46,7 +47,7 @@ async function executarRelatorio(
         },
         body: JSON.stringify({
           dateRanges: [{ startDate: sinceDate, endDate: untilDate }],
-          dimensions: DIMENSOES,
+          dimensions: dimensoes,
           metrics: metricas,
           limit: TAMANHO_PAGINA_GA4,
           offset,
@@ -94,6 +95,59 @@ export function buscarLeads(credenciais: GA4Credentials, sinceDate: string, unti
   return executarRelatorio(credenciais, sinceDate, untilDate, [{ name: 'eventCount' }], 'leads', {
     filter: { fieldName: 'eventName', stringFilter: { matchType: 'EXACT', value: EVENTO_LEAD } },
   });
+}
+
+export type TipoDetalhamentoLead = 'caminho' | 'origem' | 'idade' | 'genero' | 'local' | 'retorno' | 'tempo';
+
+// Primeira dimensão sempre `date` (grão diário); as demais são as dim1/dim2/dim3 gravadas em
+// analytics_lead_breakdown_daily. Ver migration 046.
+const CONSULTAS_DETALHAMENTO_LEAD: Array<{ tipo: TipoDetalhamentoLead; dimensoes: string[] }> = [
+  { tipo: 'caminho', dimensoes: ['landingPage', 'pagePath', 'pageReferrer'] }, // entrada, cadastro, página anterior
+  { tipo: 'origem', dimensoes: ['sessionSource', 'sessionMedium'] },
+  { tipo: 'idade', dimensoes: ['userAgeBracket'] },
+  { tipo: 'genero', dimensoes: ['userGender'] },
+  { tipo: 'local', dimensoes: ['region', 'city'] },
+  { tipo: 'retorno', dimensoes: ['newVsReturning'] },
+  { tipo: 'tempo', dimensoes: ['firstSessionDate'] },
+];
+
+export type ResultadoDetalhamentoLead =
+  | { tipo: TipoDetalhamentoLead; ok: true; linhas: GA4Row[] }
+  | { tipo: TipoDetalhamentoLead; ok: false; erro: string };
+
+/**
+ * Leads (generate_lead) quebrados por dimensão da jornada — cada dimensão é uma consulta
+ * própria e falha isolada: idade/gênero exigem Google Signals e podem voltar erro/vazio
+ * sem derrubar caminho, origem etc.
+ */
+export function buscarDetalhamentoLeads(
+  credenciais: GA4Credentials,
+  sinceDate: string,
+  untilDate: string
+): Promise<ResultadoDetalhamentoLead[]> {
+  const filtroLead = { filter: { fieldName: 'eventName', stringFilter: { matchType: 'EXACT', value: EVENTO_LEAD } } };
+
+  const consultar = (tipo: TipoDetalhamentoLead, dimensoes: string[]) =>
+    executarRelatorio(
+      credenciais,
+      sinceDate,
+      untilDate,
+      [{ name: 'eventCount' }],
+      `leads por ${tipo}`,
+      filtroLead,
+      [{ name: 'date' }, ...dimensoes.map((name) => ({ name }))]
+    );
+
+  return Promise.all(
+    CONSULTAS_DETALHAMENTO_LEAD.map(({ tipo, dimensoes }) =>
+      // A 3ª dimensão do caminho (pageReferrer) é opcional: se o GA4 recusar essa combinação,
+      // refaz só com entrada + cadastro em vez de perder o card inteiro.
+      (tipo === 'caminho' ? consultar(tipo, dimensoes).catch(() => consultar(tipo, dimensoes.slice(0, 2))) : consultar(tipo, dimensoes)).then(
+        (linhas): ResultadoDetalhamentoLead => ({ tipo, ok: true, linhas }),
+        (erro): ResultadoDetalhamentoLead => ({ tipo, ok: false, erro: erro instanceof Error ? erro.message : 'falha desconhecida' })
+      )
+    )
+  );
 }
 
 interface GA4PropertySummary {

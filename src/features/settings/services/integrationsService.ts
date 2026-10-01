@@ -48,6 +48,10 @@ async function reatribuirHistorico(key: IntegrationKey, contaOrigem: string | nu
   } else if (key === 'ga4') {
     const { error } = await aplicarFiltroOrigem(supabase.from('analytics_sessions_daily').update({ account_id: contaDestino }));
     if (error) throw new Error(error.message);
+    const { error: erroDetalhamento } = await aplicarFiltroOrigem(
+      supabase.from('analytics_lead_breakdown_daily').update({ account_id: contaDestino })
+    );
+    if (erroDetalhamento) throw new Error(erroDetalhamento.message);
   } else if (key === 'rd_station') {
     const { error } = await aplicarFiltroOrigem(supabase.from('leads').update({ account_id: contaDestino }));
     if (error) throw new Error(error.message);

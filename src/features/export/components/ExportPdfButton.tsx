@@ -18,7 +18,6 @@ const ROTULO_ABA: Record<string, string> = {
   geral: 'Geral',
   google_ads: 'Google Ads',
   meta_ads: 'Meta Ads',
-  analytics: 'Analytics',
 };
 
 interface ExportPdfButtonProps {
@@ -50,8 +49,7 @@ export function ExportPdfButton({ parametros }: ExportPdfButtonProps) {
         <DialogHeader>
           <DialogTitle>Exportar relatório em PDF</DialogTitle>
           <DialogDescription>
-            O PDF traz cards, gráficos e tabelas da aba selecionada — exceto leads individuais (nome/e-mail nunca
-            saem do painel).
+            O PDF reproduz a visualização selecionada — exceto leads individuais (nome/e-mail nunca saem do painel).
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-2 rounded-md border p-4 text-sm">
@@ -59,9 +57,9 @@ export function ExportPdfButton({ parametros }: ExportPdfButtonProps) {
             <span className="text-muted-foreground">Aba</span>
             <span className="font-medium">{ROTULO_ABA[parametros.aba] ?? parametros.aba}</span>
           </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Conta</span>
-            <span className="font-medium">{parametros.accountName ?? 'Geral (todas as contas)'}</span>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">{parametros.accountIds && parametros.accountIds.length > 1 ? 'Contas' : 'Conta'}</span>
+            <span className="text-right font-medium">{parametros.accountName ?? 'Todas as contas'}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Período</span>

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '@/components/shared/DataTable';
+import { PlatformIcon } from '@/components/shared/icons/PlatformIcon';
 import { Badge } from '@/components/ui/badge';
 import { formatarData } from '@/utils/formatters';
 
@@ -30,7 +31,15 @@ export function LeadsTable({ leads, carregando, mensagemVazio }: LeadsTableProps
       {
         accessorKey: 'source',
         header: 'Origem',
-        cell: ({ row }) => (row.original.source ? <Badge variant="secondary">{row.original.source}</Badge> : '—'),
+        cell: ({ row }) =>
+          row.original.source ? (
+            <Badge variant="secondary" className="gap-1.5">
+              <PlatformIcon plataforma="rd_station" className="h-3 w-3" />
+              {row.original.source}
+            </Badge>
+          ) : (
+            '—'
+          ),
       },
       { accessorKey: 'funnel_stage', header: 'Etapa', cell: ({ row }) => row.original.funnel_stage ?? '—' },
       {

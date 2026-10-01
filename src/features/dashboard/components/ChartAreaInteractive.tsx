@@ -1,5 +1,8 @@
+import { useState } from 'react';
 import { Area, AreaChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { PlatformIcon } from '@/components/shared/icons/PlatformIcon';
+import type { IntegrationKey } from '@/types/database.types';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatarData } from '@/utils/formatters';
 
@@ -7,6 +10,8 @@ export interface SerieDoGrafico {
   chave: string;
   rotulo: string;
   cor: string; // var(--series-N)
+  /** Eixo vertical da série: 'direita' usa uma escala própria (ex.: leads por dia junto do custo por lead). Padrão 'esquerda'. */
+  eixo?: 'esquerda' | 'direita';
   formatarValor: (valor: number) => string;
 }
 
@@ -16,6 +21,8 @@ interface ChartAreaInteractiveProps<TPonto extends { date: string }> {
   dados: TPonto[];
   series: SerieDoGrafico[];
   carregando: boolean;
+  /** Integração(ões) de onde vem o dado, exibida(s) como logo no canto do cabeçalho. */
+  plataformas?: IntegrationKey[];
 }
 
 function TooltipPersonalizado({
@@ -51,17 +58,44 @@ function TooltipPersonalizado({
   );
 }
 
+// Até esse número de pontos (7 dias) toda data do eixo aparece e todo ponto tem rótulo.
+const LIMITE_PONTOS_COM_TODAS_AS_DATAS = 10;
+// Largura aproximada (px) que cada data do eixo + o valor em cima dela ocupam.
+const LARGURA_POR_ROTULO = 95;
+
+/** De quantos em quantos pontos há uma data no eixo (e, junto, o valor na linha) para a largura disponível. */
+function passoDoEixo(totalPontos: number, largura: number): number {
+  if (totalPontos <= LIMITE_PONTOS_COM_TODAS_AS_DATAS) return 1;
+  const maximoDeRotulos = Math.max(3, Math.floor(largura / LARGURA_POR_ROTULO));
+  return Math.ceil(totalPontos / maximoDeRotulos);
+}
+
 export function ChartAreaInteractive<TPonto extends { date: string }>({
   titulo,
   descricao,
   dados,
   series,
   carregando,
+  plataformas,
 }: ChartAreaInteractiveProps<TPonto>) {
+  const [largura, setLargura] = useState(900);
+  const passo = passoDoEixo(dados.length, largura);
+  const ultimoIndice = dados.length - 1;
+  const temEixoDireito = series.some((serie) => serie.eixo === 'direita');
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{titulo}</CardTitle>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle>{titulo}</CardTitle>
+          {plataformas && plataformas.length > 0 && (
+            <div className="flex shrink-0 items-center gap-1">
+              {plataformas.map((plataforma) => (
+                <PlatformIcon key={plataforma} plataforma={plataforma} className="h-4 w-4" />
+              ))}
+            </div>
+          )}
+        </div>
         <CardDescription>{descricao}</CardDescription>
       </CardHeader>
       <CardContent>
@@ -72,8 +106,8 @@ export function ChartAreaInteractive<TPonto extends { date: string }>({
             Sem dados neste período — tente ampliar o intervalo
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height={300}>
-            <AreaChart data={dados} margin={{ left: 0, right: 12, top: 12, bottom: 0 }}>
+          <ResponsiveContainer width="100%" height={300} onResize={(novaLargura) => setLargura(novaLargura)}>
+            <AreaChart data={dados} margin={{ left: 0, right: temEixoDireito ? 0 : 12, top: 24, bottom: 0 }}>
               <defs>
                 {series.map((serie) => (
                   <linearGradient key={serie.chave} id={`preenchimento-${serie.chave}`} x1="0" y1="0" x2="0" y2="1">
@@ -89,9 +123,20 @@ export function ChartAreaInteractive<TPonto extends { date: string }>({
                 tick={{ fill: 'var(--chart-ink-muted)', fontSize: 12 }}
                 axisLine={false}
                 tickLine={false}
-                minTickGap={24}
+                interval={passo - 1}
               />
-              <YAxis tick={{ fill: 'var(--chart-ink-muted)', fontSize: 12 }} axisLine={false} tickLine={false} width={48} />
+              <YAxis yAxisId="esquerda" tick={{ fill: 'var(--chart-ink-muted)', fontSize: 12 }} axisLine={false} tickLine={false} width={48} />
+              {temEixoDireito && (
+                <YAxis
+                  yAxisId="direita"
+                  orientation="right"
+                  allowDecimals={false}
+                  tick={{ fill: 'var(--chart-ink-muted)', fontSize: 12 }}
+                  axisLine={false}
+                  tickLine={false}
+                  width={40}
+                />
+              )}
               <Tooltip content={<TooltipPersonalizado series={series} />} />
               <Legend
                 verticalAlign="top"
@@ -104,10 +149,29 @@ export function ChartAreaInteractive<TPonto extends { date: string }>({
                   key={serie.chave}
                   type="monotone"
                   dataKey={serie.chave}
+                  yAxisId={serie.eixo === 'direita' ? 'direita' : 'esquerda'}
+                  connectNulls
                   name={serie.rotulo}
                   stroke={serie.cor}
                   strokeWidth={2}
                   fill={`url(#preenchimento-${serie.chave})`}
+                  label={({ x, y, value, index }: { x?: number; y?: number; value?: number | string | null; index?: number }) => {
+                    if (typeof x !== 'number' || typeof y !== 'number' || typeof value !== 'number' || index === undefined) return <g />;
+                    // só onde há data no eixo — mesmo passo do XAxis (interval)
+                    if (index % passo !== 0) return <g />;
+                    return (
+                      <text
+                        x={x}
+                        y={y - 8}
+                        textAnchor={index === 0 ? 'start' : index > ultimoIndice - passo / 2 ? 'end' : 'middle'}
+                        fontSize={11}
+                        fontWeight={500}
+                        fill="var(--chart-ink-primary)"
+                      >
+                        {serie.formatarValor(value)}
+                      </text>
+                    );
+                  }}
                 />
               ))}
             </AreaChart>
