@@ -382,7 +382,8 @@ interface LinhaSessaoDetalhada {
   sessions: number;
   users: number;
   leads?: number;
-  page_path: string | null;
+  /** A view diária do GA4 (vw_analytics_sessions_diario) não traz página — só dia e dispositivo. */
+  page_path?: string | null;
   device: string | null;
 }
 

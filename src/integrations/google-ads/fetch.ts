@@ -83,17 +83,32 @@ export async function buscarPalavrasChave(
   untilDate: string
 ): Promise<GoogleAdsRow[]> {
   const linhas = await lerAbaFiltrada(credenciais, 'PalavrasChave', sinceDate, untilDate);
-  return linhas.map((linha) => ({
+
+  // ad_keyword_performance_daily não tem grupo de anúncios no grão: o mesmo
+  // termo em 2 grupos da campanha vira a mesma chave, e o upsert recusa o lote
+  // inteiro ("cannot affect row a second time"). Soma as linhas repetidas.
+  const agrupadas = new Map<string, { linha: Record<string, string>; data: string; clicks: number; impressions: number; costMicros: number }>();
+  for (const linha of linhas) {
+    const data = parseDataPlanilha(linha.date) ?? linha.date;
+    const chave = [linha.campaign_id, data, linha.keyword, linha.search_term].join('\u0000');
+    const acumulada = agrupadas.get(chave) ?? { linha, data, clicks: 0, impressions: 0, costMicros: 0 };
+    acumulada.clicks += parseNumeroPlanilha(linha.clicks);
+    acumulada.impressions += parseNumeroPlanilha(linha.impressions);
+    acumulada.costMicros += parseNumeroPlanilha(linha.cost_micros);
+    agrupadas.set(chave, acumulada);
+  }
+
+  return Array.from(agrupadas.values()).map(({ linha, data, clicks, impressions, costMicros }) => ({
     campaign: { id: linha.campaign_id, name: linha.campaign_name || undefined },
     segments: {
-      date: parseDataPlanilha(linha.date) ?? linha.date,
+      date: data,
       keyword: linha.keyword ? { info: { text: linha.keyword } } : undefined,
       searchTermView: linha.search_term ? { searchTerm: linha.search_term } : undefined,
     },
     metrics: {
-      clicks: String(parseNumeroPlanilha(linha.clicks)),
-      impressions: String(parseNumeroPlanilha(linha.impressions)),
-      costMicros: String(parseNumeroPlanilha(linha.cost_micros)),
+      clicks: String(clicks),
+      impressions: String(impressions),
+      costMicros: String(costMicros),
     },
   }));
 }

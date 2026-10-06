@@ -15,7 +15,7 @@ import {
   type JornadaDoLead,
   type LinhaDispositivoAgregada,
 } from '@/utils/metricsAggregation';
-import { calcularPainelDeMidia, calcularSerieCustoPorConversao, calcularSerieCustoPorLead, type LinhaMidiaBruta } from '@/utils/painelCalculos';
+import { calcularPainelDeMidia, calcularSerieCustoPorConversao, calcularSerieCustoPorLead, calcularSerieSessoesELeads, type LinhaMidiaBruta } from '@/utils/painelCalculos';
 import type { CampaignCostEntry, LeadCostDaily, Platform, Region } from '@/types/database.types';
 
 interface PontoSerieAnalytics {
@@ -237,6 +237,11 @@ export function useDashboardMetrics(
   const { metricasMidia, temDadosMidia, comparacaoMidia, detalhamentoCusto, comparacaoCustoDetalhado, comparativoPlataformas, campanhas } =
     painelMidia;
 
+  const serieSessoesELeads = useMemo(
+    () => calcularSerieSessoesELeads(serieTemporalAnalytics, custoPorLead, dataInicio, dataFim),
+    [serieTemporalAnalytics, custoPorLead, dataInicio, dataFim]
+  );
+
   const serieCustoPorConversao = useMemo(
     () => calcularSerieCustoPorConversao(linhasMidiaAtual, lancamentosCustoAtual, dataInicio, dataFim),
     [linhasMidiaAtual, lancamentosCustoAtual, dataInicio, dataFim]
@@ -269,7 +274,7 @@ export function useDashboardMetrics(
     metricasAnalyticsAnterior,
     comparacaoAnalytics,
     serieCustoPorConversao,
-    serieTemporalAnalytics,
+    serieSessoesELeads,
     serieCustoPorLead,
     campanhas,
     paginas,

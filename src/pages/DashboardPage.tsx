@@ -81,7 +81,7 @@ export function DashboardPage() {
     metricasAnalytics,
     comparacaoAnalytics,
     serieCustoPorConversao,
-    serieTemporalAnalytics,
+    serieSessoesELeads,
     serieCustoPorLead,
     campanhas,
     dispositivos,
@@ -119,7 +119,7 @@ export function DashboardPage() {
 
   const seriesSessoesELeads: SerieDoGrafico[] = [
     { chave: 'sessions', rotulo: 'Sessões', cor: 'var(--series-1)', formatarValor: formatarNumero },
-    { chave: 'leads', rotulo: 'Leads', cor: 'var(--series-2)', formatarValor: formatarNumero },
+    { chave: 'leads', rotulo: 'Leads', cor: 'var(--series-2)', formatarValor: formatarNumero, eixo: 'direita' },
   ];
 
   const seriesCustoPorLead: SerieDoGrafico[] = [
@@ -154,7 +154,7 @@ export function DashboardPage() {
               titulo="Sessões e leads"
               plataformas={['ga4', 'rd_station']}
               descricao="Tendência no período selecionado"
-              dados={serieTemporalAnalytics}
+              dados={serieSessoesELeads}
               series={seriesSessoesELeads}
               carregando={carregando}
             />
@@ -174,7 +174,7 @@ export function DashboardPage() {
             key={secao}
             titulo="Sessões e leads"
             descricao="Tendência no período selecionado"
-            dados={serieTemporalAnalytics}
+            dados={serieSessoesELeads}
             series={seriesSessoesELeads}
             carregando={carregando}
           />

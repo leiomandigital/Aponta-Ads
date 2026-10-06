@@ -5,7 +5,7 @@ import { ReportDocument } from '../../src/features/export/pdf/ReportDocument.js'
 import { autenticarUsuario } from '../_lib/auth.js';
 import { buscarConfiguracoesDeMarca } from '../_lib/reportData.js';
 import { criarDashboardQueries } from '../../src/services/dashboardQueries.js';
-import { calcularPainelDeAnalytics, calcularPainelDeMidia, calcularSerieCustoPorConversao, calcularSerieCustoPorLead } from '../../src/utils/painelCalculos.js';
+import { calcularPainelDeAnalytics, calcularPainelDeMidia, calcularSerieCustoPorConversao, calcularSerieCustoPorLead, calcularSerieSessoesELeads } from '../../src/utils/painelCalculos.js';
 import { calcularPeriodoAnterior, DISTRIBUICAO_VAZIA, JORNADA_VAZIA } from '../../src/utils/metricsAggregation.js';
 import type { Platform } from '../../src/types/database.types.js';
 
@@ -108,6 +108,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         painelAnalytics: ehGeral ? calcularPainelDeAnalytics(linhasAnalytics, linhasAnalyticsAnteriores) : undefined,
         custoPorLead,
         custoPorLeadAnterior,
+        serieSessoesELeads: ehGeral
+          ? calcularSerieSessoesELeads(calcularPainelDeAnalytics(linhasAnalytics, linhasAnalyticsAnteriores).serieTemporalAnalytics, custoPorLead, dataInicio, dataFim)
+          : [],
         serieCustoPorConversao: ehGeral ? [] : calcularSerieCustoPorConversao(linhasMidia, lancamentos, dataInicio, dataFim),
         serieCustoPorLead: ehGeral ? calcularSerieCustoPorLead(custoPorLead, linhasMidia, lancamentos, dataInicio, dataFim) : [],
         jornadaDoLead,

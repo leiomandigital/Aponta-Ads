@@ -13,6 +13,7 @@ import {
   calcularPainelDeAnalytics,
   type PainelDeMidia,
   type PontoCustoPorConversao,
+  type PontoSessoesELeads,
   type PontoCustoPorLead,
 } from '../../../utils/painelCalculos.js';
 import { PdfAreaChart, type SeriePdf } from './PdfAreaChart.js';
@@ -288,6 +289,7 @@ interface ReportDocumentProps {
   custoPorLeadAnterior?: LeadCostDaily[];
   serieCustoPorLead?: PontoCustoPorLead[];
   serieCustoPorConversao?: PontoCustoPorConversao[];
+  serieSessoesELeads?: PontoSessoesELeads[];
   jornadaDoLead?: JornadaDoLead;
   distribuicaoLeads?: DistribuicaoDeLeads;
   linksFormularios?: Record<string, string>;
@@ -297,7 +299,7 @@ const SEM_DADOS = '—';
 
 const SERIES_SESSOES_E_LEADS: SeriePdf[] = [
   { chave: 'sessions', rotulo: 'Sessões', cor: COR_SERIE_1, formatarValor: formatarNumero },
-  { chave: 'leads', rotulo: 'Leads', cor: COR_SERIE_2, formatarValor: formatarNumero },
+  { chave: 'leads', rotulo: 'Leads', cor: COR_SERIE_2, formatarValor: formatarNumero, eixo: 'direita' },
 ];
 // Custo por lead no eixo da esquerda e leads por dia no eixo da direita — igual ao gráfico do dashboard.
 const SERIES_CUSTO_POR_LEAD: SeriePdf[] = [
@@ -328,6 +330,7 @@ export function ReportDocument({
   custoPorLeadAnterior,
   serieCustoPorLead = [],
   serieCustoPorConversao = [],
+  serieSessoesELeads = [],
   jornadaDoLead,
   distribuicaoLeads,
   linksFormularios = {},
@@ -492,7 +495,7 @@ export function ReportDocument({
             <PdfAreaChart
               titulo="Sessões e leads"
               descricao={DESCRICAO_GRAFICO}
-              dados={painelAnalytics?.serieTemporalAnalytics ?? []}
+              dados={serieSessoesELeads}
               series={SERIES_SESSOES_E_LEADS}
               formatarData={formatarData}
               plataformas={['ga4', 'rd_station']}

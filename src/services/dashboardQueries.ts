@@ -21,8 +21,53 @@ export interface FiltrosDashboard {
   idsContasInativas?: string[];
 }
 
-const LIMITE_LEADS_DISTRIBUICAO = 5000;
-const TAMANHO_PAGINA_JORNADA = 1000;
+// O Supabase devolve no máximo 1000 linhas por consulta (teto configurável no projeto) e corta o resto sem avisar.
+const TAMANHO_PAGINA = 1000;
+// Quantos blocos pedir ao mesmo tempo depois do primeiro — rápido sem inundar a API.
+const PAGINAS_EM_PARALELO = 5;
+
+interface RespostaPaginada {
+  data: unknown[] | null;
+  error: { message: string } | null;
+  count?: number | null;
+}
+
+/** Consulta já montada (filtros e ordenação), pronta para receber .range(). A ordenação precisa ser estável. */
+interface ConsultaPaginavel {
+  range(de: number, ate: number): PromiseLike<RespostaPaginada>;
+}
+
+/**
+ * Lê TODAS as linhas de uma consulta, sem o corte do teto de linhas: o 1º bloco traz também o total (count) e os
+ * demais blocos são pedidos em paralelo. `montar` precisa devolver uma consulta NOVA a cada chamada (o builder do
+ * Supabase é mutável) e com ordenação estável, senão linhas se repetem ou somem entre os blocos.
+ */
+async function lerTodasAsLinhas<T>(montar: (opcoes?: { count: 'exact' }) => ConsultaPaginavel): Promise<T[]> {
+  const primeiro = await montar({ count: 'exact' }).range(0, TAMANHO_PAGINA - 1);
+  if (primeiro.error) throw new Error(primeiro.error.message);
+
+  const linhas = (primeiro.data ?? []) as T[];
+  const total = primeiro.count ?? linhas.length;
+  // o servidor pode devolver menos que o pedido (teto de linhas do projeto): o tamanho real do 1º bloco manda.
+  const tamanho = linhas.length;
+  if (tamanho === 0 || total <= tamanho) return linhas;
+
+  const inicios: number[] = [];
+  for (let inicio = tamanho; inicio < total; inicio += tamanho) inicios.push(inicio);
+
+  for (let i = 0; i < inicios.length; i += PAGINAS_EM_PARALELO) {
+    const blocos = await Promise.all(
+      inicios.slice(i, i + PAGINAS_EM_PARALELO).map(async (inicio) => {
+        const resposta = await montar().range(inicio, inicio + tamanho - 1);
+        if (resposta.error) throw new Error(resposta.error.message);
+        return (resposta.data ?? []) as T[];
+      })
+    );
+    for (const bloco of blocos) linhas.push(...bloco);
+  }
+
+  return linhas;
+}
 
 /**
  * Uma conta específica precisa enxergar tanto as próprias linhas quanto as de
@@ -54,18 +99,20 @@ export function criarDashboardQueries(supabase: SupabaseClient) {
      * de uma consulta repetida ao banco por card/gráfico que precisa do dado.
      */
     async obterLinhasDeAnalytics(filtros: FiltrosDashboard) {
-      let consulta = supabase
-        .from('analytics_sessions_daily')
-        .select('date, sessions, users, leads, page_path, device')
-        .gte('date', filtros.dataInicio)
-        .lte('date', filtros.dataFim);
-
       const filtroConta = filtroDeConta(filtros.accountIds, filtros.idsContasInativas);
-      if (filtroConta) consulta = consulta.or(filtroConta);
 
-      const { data, error } = await consulta;
-      if (error) throw new Error(error.message);
-      return data ?? [];
+      // vw_analytics_sessions_diario: o mesmo dado de analytics_sessions_daily já somado por dia/dispositivo/conta.
+      return lerTodasAsLinhas<{ date: string; device: string | null; account_id: string | null; sessions: number; users: number; leads: number }>(
+        (opcoes) => {
+          let consulta = supabase
+            .from('vw_analytics_sessions_diario')
+            .select('date, device, account_id, sessions, users, leads', opcoes)
+            .gte('date', filtros.dataInicio)
+            .lte('date', filtros.dataFim);
+          if (filtroConta) consulta = consulta.or(filtroConta);
+          return consulta.order('date').order('device').order('account_id');
+        }
+      );
     },
     /**
      * Linhas brutas de ad_performance_daily (com granularidade de campanha,
@@ -74,19 +121,31 @@ export function criarDashboardQueries(supabase: SupabaseClient) {
      * mesmas linhas no cliente, sem consulta adicional ao banco por seleção.
      */
     async obterLinhasDeMidia(filtros: FiltrosDashboard) {
-      let consulta = supabase
-        .from('ad_performance_daily')
-        .select('date, platform, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, impressions, clicks, cost, conversions')
-        .gte('date', filtros.dataInicio)
-        .lte('date', filtros.dataFim);
-
-      if (filtros.platform) consulta = consulta.eq('platform', filtros.platform);
       const filtroContaMidia = filtroDeConta(filtros.accountIds, filtros.idsContasInativas);
-      if (filtroContaMidia) consulta = consulta.or(filtroContaMidia);
 
-      const { data, error } = await consulta;
-      if (error) throw new Error(error.message);
-      return data ?? [];
+      return lerTodasAsLinhas<{
+        date: string;
+        platform: string;
+        campaign_id: string;
+        campaign_name: string | null;
+        adset_id: string | null;
+        adset_name: string | null;
+        ad_id: string | null;
+        ad_name: string | null;
+        impressions: number;
+        clicks: number;
+        cost: number;
+        conversions: number;
+      }>((opcoes) => {
+        let consulta = supabase
+          .from('ad_performance_daily')
+          .select('date, platform, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, impressions, clicks, cost, conversions', opcoes)
+          .gte('date', filtros.dataInicio)
+          .lte('date', filtros.dataFim);
+        if (filtros.platform) consulta = consulta.eq('platform', filtros.platform);
+        if (filtroContaMidia) consulta = consulta.or(filtroContaMidia);
+        return consulta.order('id');
+      });
     },
 
     /**
@@ -96,25 +155,17 @@ export function criarDashboardQueries(supabase: SupabaseClient) {
     async obterJornadaDoLead(
       filtros: Pick<FiltrosDashboard, 'dataInicio' | 'dataFim' | 'accountIds' | 'idsContasInativas'>
     ): Promise<JornadaDoLead> {
-      const linhas: LinhaDetalhamentoLead[] = [];
       const filtroContaJornada = filtroDeConta(filtros.accountIds, filtros.idsContasInativas);
 
-      for (let inicio = 0; ; inicio += TAMANHO_PAGINA_JORNADA) {
+      const linhas = await lerTodasAsLinhas<LinhaDetalhamentoLead>((opcoes) => {
         let consulta = supabase
           .from('analytics_lead_breakdown_daily')
-          .select('kind, dim1, dim2, dim3, leads')
+          .select('kind, dim1, dim2, dim3, leads', opcoes)
           .gte('date', filtros.dataInicio)
-          .lte('date', filtros.dataFim)
-          .order('date')
-          .order('id')
-          .range(inicio, inicio + TAMANHO_PAGINA_JORNADA - 1);
+          .lte('date', filtros.dataFim);
         if (filtroContaJornada) consulta = consulta.or(filtroContaJornada);
-
-        const { data, error } = await consulta;
-        if (error) throw new Error(error.message);
-        linhas.push(...(data ?? []));
-        if ((data ?? []).length < TAMANHO_PAGINA_JORNADA) break;
-      }
+        return consulta.order('date').order('id');
+      });
 
       return agruparJornadaDoLead(linhas);
     },
@@ -132,19 +183,20 @@ export function criarDashboardQueries(supabase: SupabaseClient) {
     async obterDistribuicaoDeLeads(
       filtros: Pick<FiltrosDashboard, 'dataInicio' | 'dataFim' | 'accountIds' | 'idsContasInativas'>
     ): Promise<DistribuicaoDeLeads> {
-      let consulta = supabase
-        .from('leads')
-        .select('source, funnel_stage, region, event_identifier')
-        .gte('captured_at', filtros.dataInicio)
-        .lte('captured_at', `${filtros.dataFim}T23:59:59.999`)
-        .limit(LIMITE_LEADS_DISTRIBUICAO);
-
       const filtroContaLeads = filtroDeConta(filtros.accountIds, filtros.idsContasInativas);
-      if (filtroContaLeads) consulta = consulta.or(filtroContaLeads);
 
-      const { data, error } = await consulta;
-      if (error) throw new Error(error.message);
-      return distribuirLeads(data ?? []);
+      const leads = await lerTodasAsLinhas<{ source: string | null; funnel_stage: string | null; region: string | null; event_identifier: string | null }>(
+        (opcoes) => {
+          let consulta = supabase
+            .from('leads')
+            .select('source, funnel_stage, region, event_identifier', opcoes)
+            .gte('captured_at', filtros.dataInicio)
+            .lte('captured_at', `${filtros.dataFim}T23:59:59.999`);
+          if (filtroContaLeads) consulta = consulta.or(filtroContaLeads);
+          return consulta.order('id');
+        }
+      );
+      return distribuirLeads(leads);
     },
 
     async obterLeadsRecentes(filtros: Pick<FiltrosDashboard, 'dataInicio' | 'dataFim' | 'accountIds' | 'idsContasInativas'>) {
@@ -173,40 +225,39 @@ export function criarDashboardQueries(supabase: SupabaseClient) {
     async obterCustoPorLeadPorOrigem(
       filtros: Pick<FiltrosDashboard, 'dataInicio' | 'dataFim' | 'accountIds' | 'idsContasInativas'>
     ): Promise<LeadCostDaily[]> {
-      let consulta = supabase
-        .from('vw_lead_cost_daily')
-        .select('*')
-        .gte('date', filtros.dataInicio)
-        .lte('date', filtros.dataFim)
-        .order('date', { ascending: false });
-
       const filtroContaCusto = filtroDeConta(filtros.accountIds, filtros.idsContasInativas);
-      if (filtroContaCusto) consulta = consulta.or(filtroContaCusto);
 
-      const { data, error } = await consulta;
-      if (error) throw new Error(error.message);
-      return data ?? [];
+      return lerTodasAsLinhas<LeadCostDaily>((opcoes) => {
+        let consulta = supabase
+          .from('vw_lead_cost_daily')
+          .select('*', opcoes)
+          .gte('date', filtros.dataInicio)
+          .lte('date', filtros.dataFim);
+        if (filtroContaCusto) consulta = consulta.or(filtroContaCusto);
+        // (date, source, account_id) é a chave da view — ordenação estável.
+        return consulta.order('date', { ascending: false }).order('source').order('account_id');
+      });
     },
 
     /** Lançamentos manuais de custo avulso no período — ver campaign_cost_entries (taxa da plataforma é calculada, não lançada). */
     async obterLancamentosDeCusto(
       filtros: Pick<FiltrosDashboard, 'dataInicio' | 'dataFim' | 'platform' | 'accountIds' | 'idsContasInativas'>
     ): Promise<CampaignCostEntry[]> {
-      let consulta = supabase
-        .from('campaign_cost_entries')
-        .select('id, account_id, platform, campaign_id, amount, date, description, created_at')
-        .gte('date', filtros.dataInicio)
-        .lte('date', filtros.dataFim);
-
-      // 'todas' entra em qualquer plataforma: é dividido 50/50 logo abaixo.
-      if (filtros.platform) consulta = consulta.in('platform', [filtros.platform, 'todas']);
       const filtroContaLancamentos = filtroDeConta(filtros.accountIds, filtros.idsContasInativas);
-      if (filtroContaLancamentos) consulta = consulta.or(filtroContaLancamentos);
 
-      const { data, error } = await consulta;
-      if (error) throw new Error(error.message);
+      const data = await lerTodasAsLinhas<CampaignCostEntry>((opcoes) => {
+        let consulta = supabase
+          .from('campaign_cost_entries')
+          .select('id, account_id, platform, campaign_id, amount, date, description, created_at', opcoes)
+          .gte('date', filtros.dataInicio)
+          .lte('date', filtros.dataFim);
+        // 'todas' entra em qualquer plataforma: é dividido 50/50 logo abaixo.
+        if (filtros.platform) consulta = consulta.in('platform', [filtros.platform, 'todas']);
+        if (filtroContaLancamentos) consulta = consulta.or(filtroContaLancamentos);
+        return consulta.order('id');
+      });
 
-      const divididos = (data ?? []).flatMap((entrada): CampaignCostEntry[] =>
+      const divididos = data.flatMap((entrada): CampaignCostEntry[] =>
         entrada.platform === 'todas'
           ? (['google_ads', 'meta_ads'] as const).map((platform) => ({ ...entrada, id: `${entrada.id}:${platform}`, platform, amount: entrada.amount / 2 }))
           : [entrada]

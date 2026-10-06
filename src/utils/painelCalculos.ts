@@ -144,7 +144,7 @@ interface LinhaAnalyticsBruta {
   sessions: number;
   users: number;
   leads: number;
-  page_path: string | null;
+  page_path?: string | null;
   device: string | null;
 }
 
@@ -169,6 +169,35 @@ function diasDoPeriodo(dataInicio: string, dataFim: string): string[] {
   const fim = new Date(`${dataFim}T00:00:00Z`);
   for (let dia = new Date(`${dataInicio}T00:00:00Z`); dia <= fim; dia.setUTCDate(dia.getUTCDate() + 1)) dias.push(dia.toISOString().slice(0, 10));
   return dias;
+}
+
+export type PontoSessoesELeads = {
+  date: string;
+  /** Sessões do GA4 no dia; null quando o GA4 não tem dado nesse dia (diferente de zero sessões). */
+  sessions: number | null;
+  /** Leads do RD Station no dia (0 nos dias sem lead). */
+  leads: number;
+};
+
+/**
+ * Gráfico "Sessões e leads" do Geral: sessões vêm do GA4 e os leads vêm do RD Station (mesma base do card
+ * "Leads" e do gráfico "Custo por lead"). Todos os dias do período entram.
+ */
+export function calcularSerieSessoesELeads(
+  serieAnalytics: Array<{ date: string; sessions: number }>,
+  custoPorLead: LeadCostDaily[],
+  dataInicio: string,
+  dataFim: string
+): PontoSessoesELeads[] {
+  const sessoesPorDia = new Map(serieAnalytics.map((ponto) => [ponto.date, ponto.sessions]));
+  const leadsPorDia = new Map<string, number>();
+  for (const linha of custoPorLead) leadsPorDia.set(linha.date, (leadsPorDia.get(linha.date) ?? 0) + linha.leads_count);
+
+  return diasDoPeriodo(dataInicio, dataFim).map((date) => ({
+    date,
+    sessions: sessoesPorDia.get(date) ?? null,
+    leads: leadsPorDia.get(date) ?? 0,
+  }));
 }
 
 export type PontoCustoPorConversao = {
