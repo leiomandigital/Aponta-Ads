@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { Fragment, useMemo } from 'react';
 import { TrendingDown, TrendingUp } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '@/components/shared/DataTable';
@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import type { AggregatedMetrics, IntegrationKey } from '@/types/database.types';
-import { compararDistribuicoes, type ComparacaoPeriodo, type ItemDistribuicao, type JornadaDoLead, type LinhaDispositivoAgregada } from '@/utils/metricsAggregation';
+import { compararDistribuicoes, sequenciaDoCaminho, type ComparacaoPeriodo, type ItemDistribuicao, type JornadaDoLead, type LinhaDispositivoAgregada } from '@/utils/metricsAggregation';
 import { extrairPathDaUrl, formatarMoeda, formatarNumero, formatarPercentual } from '@/utils/formatters';
 
 const SEM_DADOS = '—';
@@ -231,7 +231,7 @@ export function OrigemMidiaTable({
   const colunas = useMemo<ColumnDef<ItemDistribuicao, unknown>[]>(
     () => [
       { accessorKey: 'rotulo', header: 'Origem/mídia' },
-      { accessorKey: 'total', header: 'generate_lead', cell: ({ row }) => formatarNumero(row.original.total) },
+      { accessorKey: 'total', header: 'Cadastro', cell: ({ row }) => formatarNumero(row.original.total) },
     ],
     []
   );
@@ -274,7 +274,7 @@ export function LeadsPorFormularioTable({
   return <DataTable columns={colunas} data={itens} carregando={carregando} mensagemVazio={mensagemVazio} />;
 }
 
-/** Página de entrada → página anterior → página do cadastro (GA4: landingPage, pageReferrer e pagePath do evento generate_lead). */
+/** Caminho até o cadastro na ordem real da visita (GA4: landingPage, pageReferrer e pagePath do evento generate_lead) — ver sequenciaDoCaminho. */
 export function CaminhosCard({ caminhos, carregando }: { caminhos: JornadaDoLead['caminhos']; carregando: boolean }) {
   const maior = Math.max(...caminhos.map((caminho) => caminho.leads), 1);
 
@@ -294,25 +294,14 @@ export function CaminhosCard({ caminhos, carregando }: { caminhos: JornadaDoLead
             <div key={`${caminho.entrada}|${caminho.anterior}|${caminho.cadastro}`} className="flex flex-col gap-1 text-xs">
               <div className="flex items-center justify-between gap-2">
                 <span className="flex min-w-0 items-center gap-1.5">
-                  <span className="truncate rounded bg-muted px-1.5 py-0.5" title={caminho.entrada}>
-                    {caminho.entrada}
-                  </span>
-                  {caminho.anterior && (
-                    <>
-                      <span className="text-muted-foreground">→</span>
-                      <span className="truncate rounded bg-muted px-1.5 py-0.5" title={caminho.anterior}>
-                        {caminho.anterior}
+                  {sequenciaDoCaminho(caminho).map((pagina, indice) => (
+                    <Fragment key={`${indice}-${pagina}`}>
+                      {indice > 0 && <span className="text-muted-foreground">→</span>}
+                      <span className="truncate rounded bg-muted px-1.5 py-0.5" title={pagina}>
+                        {pagina}
                       </span>
-                    </>
-                  )}
-                  {caminho.entrada !== caminho.cadastro && (
-                    <>
-                      <span className="text-muted-foreground">→</span>
-                      <span className="truncate rounded bg-muted px-1.5 py-0.5" title={caminho.cadastro}>
-                        {caminho.cadastro}
-                      </span>
-                    </>
-                  )}
+                    </Fragment>
+                  ))}
                   <span className="shrink-0 text-muted-foreground">→ cadastro</span>
                 </span>
                 <span className="shrink-0 tabular-nums">{formatarNumero(caminho.leads)} leads</span>
@@ -324,7 +313,7 @@ export function CaminhosCard({ caminhos, carregando }: { caminhos: JornadaDoLead
           ))
         )}
         <p className="text-xs text-muted-foreground">
-          Mostra a página de entrada, a página visitada logo antes do cadastro e a página do cadastro. O caminho completo, passo a passo, exige o export do GA4 para o BigQuery.
+          Mostra a página de entrada, a página visitada logo antes do cadastro e a página do cadastro — só dos formulários (com link cadastrado) das contas selecionadas. O caminho completo, passo a passo, exige o export do GA4 para o BigQuery.
         </p>
       </CardContent>
     </Card>

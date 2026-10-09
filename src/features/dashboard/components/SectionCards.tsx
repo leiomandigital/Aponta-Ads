@@ -1,6 +1,6 @@
 import { KpiCard } from '@/components/shared/KpiCard';
 import type { AbaDashboard } from '@/constants/dashboard.constants';
-import type { AggregatedMetrics, CostBreakdown, IntegrationKey, LeadCostDaily } from '@/types/database.types';
+import type { AggregatedMetrics, CostBreakdown, IntegrationKey, LeadsDiario } from '@/types/database.types';
 import type { ComparacaoPeriodo } from '@/utils/metricsAggregation';
 import { calcularCustoPorConversao, calcularLeadsECpl } from '@/utils/painelCalculos';
 import { formatarMoeda, formatarNumero, formatarPercentual } from '@/utils/formatters';
@@ -183,8 +183,8 @@ export function CardsGeral({
   comparacao?: ComparacaoMidia | null;
   detalhamentoCusto?: CostBreakdown | null;
   comparacaoCustoDetalhado?: ComparacaoCustoDetalhado | null;
-  custoPorLead: LeadCostDaily[];
-  custoPorLeadAnterior?: LeadCostDaily[];
+  custoPorLead: LeadsDiario[];
+  custoPorLeadAnterior?: LeadsDiario[];
   carregando: boolean;
 }) {
   const midia: IntegrationKey[] = ['google_ads', 'meta_ads'];

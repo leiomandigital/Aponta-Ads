@@ -2,11 +2,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   agruparJornadaDoLead,
   distribuirLeads,
+  normalizarCaminhoDePagina,
   type DistribuicaoDeLeads,
   type JornadaDoLead,
   type LinhaDetalhamentoLead,
 } from '../utils/metricsAggregation.js';
-import type { CampaignCostEntry, LeadCostDaily, Platform } from '../types/database.types.js';
+import type { CampaignCostEntry, LeadsDiario, Platform } from '../types/database.types.js';
 
 export interface FiltrosDashboard {
   dataInicio: string;
@@ -91,6 +92,37 @@ function filtroDeConta(accountIds: string[] | undefined, idsContasInativas: stri
  * (api/export/pdf.ts) usa o admin — as duas pontas rodam exatamente a mesma consulta.
  */
 export function criarDashboardQueries(supabase: SupabaseClient) {
+  /**
+   * Páginas (caminhos normalizados) dos formulários marcados nas contas em visualização — o link de cada formulário
+   * (cadastrado em Configurações) casado com a seleção da conta. Usado para mostrar só os caminhos até o lead que
+   * têm relação com as contas configuradas, já que o GA4 é uma propriedade só, compartilhada entre as contas.
+   * Formulário sem link cadastrado não entra (não há como saber qual página é a dele).
+   */
+  async function obterPaginasDosFormularios(
+    filtros: Pick<FiltrosDashboard, 'accountIds' | 'idsContasInativas'>
+  ): Promise<Set<string>> {
+    const filtroConta = filtroDeConta(filtros.accountIds, filtros.idsContasInativas);
+
+    const [selecionados, descobertos] = await Promise.all([
+      lerTodasAsLinhas<{ integration_id: string; external_id: string }>((opcoes) => {
+        let consulta = supabase.from('integration_selected_assets').select('integration_id, external_id', opcoes);
+        if (filtroConta) consulta = consulta.or(filtroConta);
+        return consulta.order('id');
+      }),
+      lerTodasAsLinhas<{ integration_id: string; external_id: string; link_url: string | null }>((opcoes) =>
+        supabase.from('integration_discovered_assets').select('integration_id, external_id, link_url', opcoes).not('link_url', 'is', null).order('id')
+      ),
+    ]);
+
+    const linkPorFormulario = new Map(descobertos.map((linha) => [`${linha.integration_id}|${linha.external_id}`, linha.link_url]));
+    const paginas = new Set<string>();
+    for (const selecionado of selecionados) {
+      const pagina = normalizarCaminhoDePagina(linkPorFormulario.get(`${selecionado.integration_id}|${selecionado.external_id}`));
+      if (pagina) paginas.add(pagina);
+    }
+    return paginas;
+  }
+
   return {
     /**
      * Linhas brutas de analytics_sessions_daily — totais, série diária e
@@ -157,17 +189,28 @@ export function criarDashboardQueries(supabase: SupabaseClient) {
     ): Promise<JornadaDoLead> {
       const filtroContaJornada = filtroDeConta(filtros.accountIds, filtros.idsContasInativas);
 
-      const linhas = await lerTodasAsLinhas<LinhaDetalhamentoLead>((opcoes) => {
-        let consulta = supabase
-          .from('analytics_lead_breakdown_daily')
-          .select('kind, dim1, dim2, dim3, leads', opcoes)
-          .gte('date', filtros.dataInicio)
-          .lte('date', filtros.dataFim);
-        if (filtroContaJornada) consulta = consulta.or(filtroContaJornada);
-        return consulta.order('date').order('id');
+      const [linhas, paginasDosFormularios] = await Promise.all([
+        lerTodasAsLinhas<LinhaDetalhamentoLead>((opcoes) => {
+          let consulta = supabase
+            .from('analytics_lead_breakdown_daily')
+            .select('kind, dim1, dim2, dim3, leads', opcoes)
+            .gte('date', filtros.dataInicio)
+            .lte('date', filtros.dataFim);
+          if (filtroContaJornada) consulta = consulta.or(filtroContaJornada);
+          return consulta.order('date').order('id');
+        }),
+        obterPaginasDosFormularios(filtros),
+      ]);
+
+      // Caminhos até o lead: só os que terminam na página de um formulário das contas em visualização.
+      // As demais dimensões da jornada (origem/mídia etc.) não têm página e seguem inalteradas.
+      const linhasFiltradas = linhas.filter((linha) => {
+        if (linha.kind !== 'caminho') return true;
+        const paginaDoCadastro = normalizarCaminhoDePagina(linha.dim2);
+        return paginaDoCadastro !== null && paginasDosFormularios.has(paginaDoCadastro);
       });
 
-      return agruparJornadaDoLead(linhas);
+      return agruparJornadaDoLead(linhasFiltradas);
     },
 
     /** Link público de cada formulário do RD Station (external_id = identificador da conversão), cadastrado em Configurações. */
@@ -190,8 +233,8 @@ export function criarDashboardQueries(supabase: SupabaseClient) {
           let consulta = supabase
             .from('leads')
             .select('source, funnel_stage, region, event_identifier', opcoes)
-            .gte('captured_at', filtros.dataInicio)
-            .lte('captured_at', `${filtros.dataFim}T23:59:59.999`);
+            .gte('captured_at', `${filtros.dataInicio}T00:00:00-03:00`)
+            .lte('captured_at', `${filtros.dataFim}T23:59:59.999-03:00`);
           if (filtroContaLeads) consulta = consulta.or(filtroContaLeads);
           return consulta.order('id');
         }
@@ -222,14 +265,15 @@ export function criarDashboardQueries(supabase: SupabaseClient) {
       return data ?? [];
     },
 
-    async obterCustoPorLeadPorOrigem(
+    /** Leads por dia e origem (vw_leads_diario) — sem junção com mídia, então cada lead conta uma vez só. */
+    async obterLeadsPorDia(
       filtros: Pick<FiltrosDashboard, 'dataInicio' | 'dataFim' | 'accountIds' | 'idsContasInativas'>
-    ): Promise<LeadCostDaily[]> {
+    ): Promise<LeadsDiario[]> {
       const filtroContaCusto = filtroDeConta(filtros.accountIds, filtros.idsContasInativas);
 
-      return lerTodasAsLinhas<LeadCostDaily>((opcoes) => {
+      return lerTodasAsLinhas<LeadsDiario>((opcoes) => {
         let consulta = supabase
-          .from('vw_lead_cost_daily')
+          .from('vw_leads_diario')
           .select('*', opcoes)
           .gte('date', filtros.dataInicio)
           .lte('date', filtros.dataFim);

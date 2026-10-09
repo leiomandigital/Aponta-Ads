@@ -4,9 +4,9 @@ import { Document, Page, Text, View, Image, StyleSheet, Font, Svg, Polyline } fr
 // serverless da Vercel a partir de api/export/pdf.ts, que não garante
 // resolver o alias de path do tsconfig usado pelo Vite no client.
 import { resolverSecoesGeral, type SecaoGeral } from '../../../constants/dashboard.constants.js';
-import type { IntegrationKey, LeadCostDaily } from '../../../types/database.types.js';
+import type { IntegrationKey, LeadsDiario } from '../../../types/database.types.js';
 import { extrairPathDaUrl, formatarData, formatarDataHora, formatarMoeda, formatarNumero, formatarPercentual } from '../../../utils/formatters.js';
-import { type ComparacaoPeriodo, type DistribuicaoDeLeads, type JornadaDoLead } from '../../../utils/metricsAggregation.js';
+import { sequenciaDoCaminho, type ComparacaoPeriodo, type DistribuicaoDeLeads, type JornadaDoLead } from '../../../utils/metricsAggregation.js';
 import {
   calcularCustoPorConversao,
   calcularLeadsECpl,
@@ -285,8 +285,8 @@ interface ReportDocumentProps {
   /** Mídia paga (Google Ads / Meta Ads) já calculada com as mesmas funções do dashboard (painelCalculos). */
   painelMidia?: PainelDeMidia;
   painelAnalytics?: PainelAnalytics;
-  custoPorLead?: LeadCostDaily[];
-  custoPorLeadAnterior?: LeadCostDaily[];
+  custoPorLead?: LeadsDiario[];
+  custoPorLeadAnterior?: LeadsDiario[];
   serieCustoPorLead?: PontoCustoPorLead[];
   serieCustoPorConversao?: PontoCustoPorConversao[];
   serieSessoesELeads?: PontoSessoesELeads[];
@@ -297,19 +297,14 @@ interface ReportDocumentProps {
 
 const SEM_DADOS = '—';
 
-const SERIES_SESSOES_E_LEADS: SeriePdf[] = [
-  { chave: 'sessions', rotulo: 'Sessões', cor: COR_SERIE_1, formatarValor: formatarNumero },
-  { chave: 'leads', rotulo: 'Leads', cor: COR_SERIE_2, formatarValor: formatarNumero, eixo: 'direita' },
-];
-// Custo por lead no eixo da esquerda e leads por dia no eixo da direita — igual ao gráfico do dashboard.
-const SERIES_CUSTO_POR_LEAD: SeriePdf[] = [
-  { chave: 'cost_per_lead', rotulo: 'Custo por lead', cor: COR_SERIE_1, formatarValor: formatarMoeda },
-  { chave: 'leads', rotulo: 'Leads por dia', cor: COR_SERIE_2, formatarValor: formatarNumero, eixo: 'direita' },
-];
-// Custo por conversão no eixo da esquerda e conversões por dia no da direita — igual ao dashboard Google Ads / Meta Ads.
+// Sessões (GA4) e leads (RD Station) em gráficos separados — igual ao dashboard.
+const SERIES_SESSOES: SeriePdf[] = [{ chave: 'sessions', rotulo: 'Sessões', cor: COR_SERIE_1, formatarValor: formatarNumero }];
+const SERIES_LEADS: SeriePdf[] = [{ chave: 'leads', rotulo: 'Leads', cor: COR_SERIE_2, formatarValor: formatarNumero }];
+const SERIES_CUSTO_POR_LEAD: SeriePdf[] = [{ chave: 'cost_per_lead', rotulo: 'Custo por lead', cor: COR_SERIE_1, formatarValor: formatarMoeda }];
+// Conversões por dia (barras) e custo por conversão (linha) em gráficos separados — igual ao dashboard Google Ads / Meta Ads.
+const SERIES_CONVERSOES: SeriePdf[] = [{ chave: 'conversions', rotulo: 'Conversões por dia', cor: COR_SERIE_2, formatarValor: formatarNumero }];
 const SERIES_CUSTO_POR_CONVERSAO: SeriePdf[] = [
   { chave: 'cost_per_conversion', rotulo: 'Custo por conversão', cor: COR_SERIE_1, formatarValor: formatarMoeda },
-  { chave: 'conversions', rotulo: 'Conversões por dia', cor: COR_SERIE_2, formatarValor: formatarNumero, eixo: 'direita' },
 ];
 const DESCRICAO_GRAFICO = 'Tendência no período selecionado';
 
@@ -493,12 +488,21 @@ export function ReportDocument({
         return (
           <View key={secao}>
             <PdfAreaChart
-              titulo="Sessões e leads"
+              titulo="Sessões"
               descricao={DESCRICAO_GRAFICO}
               dados={serieSessoesELeads}
-              series={SERIES_SESSOES_E_LEADS}
+              series={SERIES_SESSOES}
               formatarData={formatarData}
-              plataformas={['ga4', 'rd_station']}
+              plataformas={['ga4']}
+            />
+            <PdfAreaChart
+              titulo="Leads"
+              descricao={DESCRICAO_GRAFICO}
+              dados={serieSessoesELeads}
+              series={SERIES_LEADS}
+              tipo="barras"
+              formatarData={formatarData}
+              plataformas={['rd_station']}
             />
             <PdfAreaChart
               titulo="Custo por lead"
@@ -515,12 +519,12 @@ export function ReportDocument({
           <View key={secao} style={estilos.secao}>
             <CabecalhoTabela
               titulo="Caminhos até o lead"
-              colunas={[{ rotulo: 'Página de entrada', flex: 2 }, { rotulo: 'Página anterior', flex: 2 }, { rotulo: 'Página do cadastro', flex: 2 }, { rotulo: 'Leads', flex: 0.6 }]}
+              colunas={[{ rotulo: 'Caminho (na ordem da visita, até o cadastro)', flex: 6 }, { rotulo: 'Leads', flex: 0.7 }]}
               plataformas={['ga4']}
             />
             <LinhasTabela
-              flex={[2, 2, 2, 0.6]}
-              linhas={(jornada?.caminhos ?? []).map((caminho) => [caminho.entrada, caminho.anterior ?? SEM_DADOS, caminho.cadastro, formatarNumero(caminho.leads)])}
+              flex={[6, 0.7]}
+              linhas={(jornada?.caminhos ?? []).map((caminho) => [`${sequenciaDoCaminho(caminho).join('  →  ')}  →  cadastro`, formatarNumero(caminho.leads)])}
             />
           </View>
         );
@@ -545,7 +549,7 @@ export function ReportDocument({
       case 'origem_midia':
         return (
           <View key={secao} style={estilos.secao}>
-            <CabecalhoTabela titulo="Origem/mídia" colunas={[{ rotulo: 'Origem/mídia', flex: 3 }, { rotulo: 'generate_lead', flex: 1 }]} plataformas={['ga4']} />
+            <CabecalhoTabela titulo="Origem/mídia" colunas={[{ rotulo: 'Origem/mídia', flex: 3 }, { rotulo: 'Cadastro', flex: 1 }]} plataformas={['ga4']} />
             <LinhasTabela flex={[3, 1]} linhas={(jornada?.origens ?? []).map((item) => [item.rotulo, formatarNumero(item.total)])} />
           </View>
         );
@@ -620,6 +624,14 @@ export function ReportDocument({
         {aba !== 'geral' && painelMidia && (
           <View>
             {cardsPlataforma()}
+            <PdfAreaChart
+              titulo="Conversões por dia"
+              descricao={DESCRICAO_GRAFICO}
+              dados={serieCustoPorConversao}
+              series={SERIES_CONVERSOES}
+              tipo="barras"
+              formatarData={formatarData}
+            />
             <PdfAreaChart
               titulo="Custo por conversão"
               descricao={DESCRICAO_GRAFICO}

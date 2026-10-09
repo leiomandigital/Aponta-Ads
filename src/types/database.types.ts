@@ -79,6 +79,14 @@ export interface Lead {
   account_id: string | null;
 }
 
+/** Leads por dia/origem/conta, contados direto da tabela leads (vw_leads_diario). */
+export interface LeadsDiario {
+  date: string;
+  source: string | null;
+  account_id: string | null;
+  leads_count: number;
+}
+
 export interface LeadCostDaily {
   date: string;
   source: string | null;

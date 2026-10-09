@@ -23,6 +23,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'integrationId inválido' });
     }
 
+    const accountId = typeof req.query.accountId === 'string' && req.query.accountId ? req.query.accountId : null;
+
+    // Mesma regra de escopo da seleção de ativos (list-assets.ts): numa
+    // integração compartilhada, cada conta tem a sua seleção; numa exclusiva,
+    // a seleção é uma só (account_id null).
+    const { data: integracao, error: erroIntegracao } = await supabaseAdmin
+      .from('integrations')
+      .select('account_id')
+      .eq('id', integrationId)
+      .maybeSingle();
+    if (erroIntegracao) return res.status(500).json({ error: erroIntegracao.message });
+    if (!integracao) return res.status(404).json({ error: 'Integração não encontrada' });
+
+    const contaDoEscopo = integracao.account_id === null ? accountId : null;
+    let consultaSelecionados = supabaseAdmin.from('integration_selected_assets').select('external_id').eq('integration_id', integrationId);
+    consultaSelecionados = contaDoEscopo ? consultaSelecionados.eq('account_id', contaDoEscopo) : consultaSelecionados.is('account_id', null);
+    const { data: selecionados, error: erroSelecionados } = await consultaSelecionados;
+    if (erroSelecionados) return res.status(500).json({ error: erroSelecionados.message });
+    const idsSelecionados = new Set((selecionados ?? []).map((linha) => linha.external_id as string));
+
     const { data, error } = await supabaseAdmin
       .from('integration_discovered_assets')
       .select('external_id, name, link_url')
@@ -35,6 +55,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         externalId: linha.external_id as string,
         name: (linha.name as string | null) ?? (linha.external_id as string),
         linkUrl: linha.link_url as string | null,
+        selecionado: idsSelecionados.has(linha.external_id as string),
       })),
     });
   }

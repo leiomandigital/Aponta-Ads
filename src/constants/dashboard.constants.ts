@@ -53,8 +53,8 @@ const ORDEM_SECOES: SecaoGeral[] = [
   'leads_por_formulario',
   'origem_midia',
   'demografia',
-  'comparativo_plataformas',
   'dispositivos',
+  'comparativo_plataformas',
   'leads_recentes',
 ];
 

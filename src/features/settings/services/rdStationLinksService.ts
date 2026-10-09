@@ -4,6 +4,8 @@ export interface LinkDeFormulario {
   externalId: string;
   name: string;
   linkUrl: string | null;
+  /** true = formulário marcado em "Escolha o que importar" da conta em visualização. */
+  selecionado: boolean;
 }
 
 async function obterHeadersAutenticados(): Promise<Record<string, string>> {
@@ -14,9 +16,11 @@ async function obterHeadersAutenticados(): Promise<Record<string, string>> {
 }
 
 export const rdStationLinksService = {
-  async listar(integrationId: string): Promise<LinkDeFormulario[]> {
+  async listar(integrationId: string, accountId: string | null): Promise<LinkDeFormulario[]> {
     const headers = await obterHeadersAutenticados();
-    const resposta = await fetch(`/api/integrations/rd-station-links?integrationId=${integrationId}`, { headers });
+    const parametros = new URLSearchParams({ integrationId });
+    if (accountId) parametros.set('accountId', accountId);
+    const resposta = await fetch(`/api/integrations/rd-station-links?${parametros}`, { headers });
     const corpo = await resposta.json().catch(() => ({}));
     if (!resposta.ok) throw new Error(corpo.error ?? 'Falha ao listar links dos formulários');
     return corpo.links;

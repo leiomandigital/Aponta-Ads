@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Area, AreaChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { PlatformIcon } from '@/components/shared/icons/PlatformIcon';
 import type { IntegrationKey } from '@/types/database.types';
@@ -12,6 +12,8 @@ export interface SerieDoGrafico {
   cor: string; // var(--series-N)
   /** Eixo vertical da série: 'direita' usa uma escala própria (ex.: leads por dia junto do custo por lead). Padrão 'esquerda'. */
   eixo?: 'esquerda' | 'direita';
+  /** Como a série é desenhada quando o gráfico mistura formas (ex.: custo por conversão em linha e conversões em barras). Padrão: área. */
+  forma?: 'area' | 'linha' | 'barras';
   formatarValor: (valor: number) => string;
 }
 
@@ -23,6 +25,8 @@ interface ChartAreaInteractiveProps<TPonto extends { date: string }> {
   carregando: boolean;
   /** Integração(ões) de onde vem o dado, exibida(s) como logo no canto do cabeçalho. */
   plataformas?: IntegrationKey[];
+  /** 'barras' desenha colunas (ex.: leads por dia); padrão 'area'. */
+  tipo?: 'area' | 'barras';
 }
 
 function TooltipPersonalizado({
@@ -70,6 +74,55 @@ function passoDoEixo(totalPontos: number, largura: number): number {
   return Math.ceil(totalPontos / maximoDeRotulos);
 }
 
+interface PropsDoRotulo {
+  x?: number;
+  y?: number;
+  width?: number;
+  value?: number | string | null;
+  index?: number;
+}
+
+/** Rótulo com o valor sobre um ponto da linha/área — só onde há data no eixo (mesmo passo do XAxis). */
+function rotuloDePonto(serie: SerieDoGrafico, passo: number, ultimoIndice: number) {
+  return function RotuloDePonto({ x, y, value, index }: PropsDoRotulo) {
+    if (typeof x !== 'number' || typeof y !== 'number' || typeof value !== 'number' || index === undefined) return <g />;
+    if (index % passo !== 0) return <g />;
+    return (
+      <text
+        x={x}
+        y={y - 8}
+        textAnchor={index === 0 ? 'start' : index > ultimoIndice - passo / 2 ? 'end' : 'middle'}
+        fontSize={11}
+        fontWeight={500}
+        fill="var(--chart-ink-primary)"
+      >
+        {serie.formatarValor(value)}
+      </text>
+    );
+  };
+}
+
+/** Rótulo com o valor sobre uma barra — só onde há data no eixo (mesmo passo do XAxis). */
+function rotuloDeBarra(serie: SerieDoGrafico, passo: number, ultimoIndice: number) {
+  return function RotuloDeBarra({ x, y, width, value, index }: PropsDoRotulo) {
+    if (typeof x !== 'number' || typeof y !== 'number' || typeof value !== 'number' || index === undefined) return <g />;
+    if (index % passo !== 0) return <g />;
+    const noFim = index > ultimoIndice - passo / 2;
+    return (
+      <text
+        x={noFim ? x + (width ?? 0) : x + (width ?? 0) / 2}
+        y={y - 6}
+        textAnchor={noFim ? 'end' : 'middle'}
+        fontSize={11}
+        fontWeight={500}
+        fill="var(--chart-ink-primary)"
+      >
+        {serie.formatarValor(value)}
+      </text>
+    );
+  };
+}
+
 export function ChartAreaInteractive<TPonto extends { date: string }>({
   titulo,
   descricao,
@@ -77,6 +130,7 @@ export function ChartAreaInteractive<TPonto extends { date: string }>({
   series,
   carregando,
   plataformas,
+  tipo = 'area',
 }: ChartAreaInteractiveProps<TPonto>) {
   const [largura, setLargura] = useState(900);
   const passo = passoDoEixo(dados.length, largura);
@@ -105,6 +159,104 @@ export function ChartAreaInteractive<TPonto extends { date: string }>({
           <div className="flex h-[300px] items-center justify-center text-sm text-muted-foreground">
             Sem dados neste período — tente ampliar o intervalo
           </div>
+        ) : series.some((serie) => serie.forma === 'linha' || serie.forma === 'barras') ? (
+          <ResponsiveContainer width="100%" height={300} onResize={(novaLargura) => setLargura(novaLargura)}>
+            <ComposedChart data={dados} margin={{ left: 0, right: temEixoDireito ? 0 : 12, top: 24, bottom: 0 }}>
+              <CartesianGrid vertical={false} stroke="var(--chart-gridline)" />
+              <XAxis
+                dataKey="date"
+                tickFormatter={formatarData}
+                tick={{ fill: 'var(--chart-ink-muted)', fontSize: 12 }}
+                axisLine={false}
+                tickLine={false}
+                interval={passo - 1}
+              />
+              <YAxis yAxisId="esquerda" tick={{ fill: 'var(--chart-ink-muted)', fontSize: 12 }} axisLine={false} tickLine={false} width={48} />
+              {temEixoDireito && (
+                <YAxis
+                  yAxisId="direita"
+                  orientation="right"
+                  allowDecimals={false}
+                  tick={{ fill: 'var(--chart-ink-muted)', fontSize: 12 }}
+                  axisLine={false}
+                  tickLine={false}
+                  width={40}
+                />
+              )}
+              <Tooltip content={<TooltipPersonalizado series={series} />} />
+              <Legend
+                verticalAlign="top"
+                align="right"
+                height={32}
+                formatter={(valor) => <span style={{ color: 'var(--chart-ink-secondary)' }}>{valor}</span>}
+              />
+              {/* barras primeiro, para a linha ficar desenhada por cima delas */}
+              {series
+                .filter((serie) => serie.forma === 'barras')
+                .map((serie) => (
+                  <Bar
+                    key={serie.chave}
+                    dataKey={serie.chave}
+                    yAxisId={serie.eixo === 'direita' ? 'direita' : 'esquerda'}
+                    name={serie.rotulo}
+                    fill={serie.cor}
+                    radius={[3, 3, 0, 0]}
+                    maxBarSize={24}
+                    label={rotuloDeBarra(serie, passo, ultimoIndice)}
+                  />
+                ))}
+              {series
+                .filter((serie) => serie.forma !== 'barras')
+                .map((serie) => (
+                  <Line
+                    key={serie.chave}
+                    type="monotone"
+                    dataKey={serie.chave}
+                    yAxisId={serie.eixo === 'direita' ? 'direita' : 'esquerda'}
+                    connectNulls
+                    name={serie.rotulo}
+                    stroke={serie.cor}
+                    strokeWidth={2}
+                    dot={false}
+                    label={rotuloDePonto(serie, passo, ultimoIndice)}
+                  />
+                ))}
+            </ComposedChart>
+          </ResponsiveContainer>
+        ) : tipo === 'barras' ? (
+          <ResponsiveContainer width="100%" height={300} onResize={(novaLargura) => setLargura(novaLargura)}>
+            <BarChart data={dados} margin={{ left: 0, right: 12, top: 24, bottom: 0 }}>
+              <CartesianGrid vertical={false} stroke="var(--chart-gridline)" />
+              <XAxis
+                dataKey="date"
+                tickFormatter={formatarData}
+                tick={{ fill: 'var(--chart-ink-muted)', fontSize: 12 }}
+                axisLine={false}
+                tickLine={false}
+                interval={passo - 1}
+              />
+              <YAxis yAxisId="esquerda" allowDecimals={false} tick={{ fill: 'var(--chart-ink-muted)', fontSize: 12 }} axisLine={false} tickLine={false} width={48} />
+              <Tooltip content={<TooltipPersonalizado series={series} />} cursor={{ fill: 'var(--chart-gridline)', opacity: 0.4 }} />
+              <Legend
+                verticalAlign="top"
+                align="right"
+                height={32}
+                formatter={(valor) => <span style={{ color: 'var(--chart-ink-secondary)' }}>{valor}</span>}
+              />
+              {series.map((serie) => (
+                <Bar
+                  key={serie.chave}
+                  dataKey={serie.chave}
+                  yAxisId="esquerda"
+                  name={serie.rotulo}
+                  fill={serie.cor}
+                  radius={[3, 3, 0, 0]}
+                  maxBarSize={24}
+                  label={rotuloDeBarra(serie, passo, ultimoIndice)}
+                />
+              ))}
+            </BarChart>
+          </ResponsiveContainer>
         ) : (
           <ResponsiveContainer width="100%" height={300} onResize={(novaLargura) => setLargura(novaLargura)}>
             <AreaChart data={dados} margin={{ left: 0, right: temEixoDireito ? 0 : 12, top: 24, bottom: 0 }}>
@@ -155,23 +307,7 @@ export function ChartAreaInteractive<TPonto extends { date: string }>({
                   stroke={serie.cor}
                   strokeWidth={2}
                   fill={`url(#preenchimento-${serie.chave})`}
-                  label={({ x, y, value, index }: { x?: number; y?: number; value?: number | string | null; index?: number }) => {
-                    if (typeof x !== 'number' || typeof y !== 'number' || typeof value !== 'number' || index === undefined) return <g />;
-                    // só onde há data no eixo — mesmo passo do XAxis (interval)
-                    if (index % passo !== 0) return <g />;
-                    return (
-                      <text
-                        x={x}
-                        y={y - 8}
-                        textAnchor={index === 0 ? 'start' : index > ultimoIndice - passo / 2 ? 'end' : 'middle'}
-                        fontSize={11}
-                        fontWeight={500}
-                        fill="var(--chart-ink-primary)"
-                      >
-                        {serie.formatarValor(value)}
-                      </text>
-                    );
-                  }}
+                  label={rotuloDePonto(serie, passo, ultimoIndice)}
                 />
               ))}
             </AreaChart>

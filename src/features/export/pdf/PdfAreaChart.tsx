@@ -1,4 +1,4 @@
-import { G, Line, Path, StyleSheet, Svg, Text, View } from '@react-pdf/renderer';
+import { G, Line, Path, Rect, StyleSheet, Svg, Text, View } from '@react-pdf/renderer';
 import type { IntegrationKey } from '../../../types/database.types.js';
 import { PlatformIconPdf } from './PlatformIconPdf.js';
 
@@ -9,6 +9,8 @@ export interface SeriePdf {
   formatarValor: (valor: number) => string;
   /** 'direita' = escala própria, desenhada no eixo da direita. Padrão 'esquerda'. */
   eixo?: 'esquerda' | 'direita';
+  /** Como a série é desenhada: 'area' (padrão), 'linha' (sem preenchimento) ou 'barras'. */
+  forma?: 'area' | 'linha' | 'barras';
 }
 
 interface PdfAreaChartProps {
@@ -19,6 +21,8 @@ interface PdfAreaChartProps {
   formatarData: (data: string) => string;
   /** Integração(ões) de onde vem o dado, exibida(s) como logo no canto do título — igual ao gráfico do dashboard. */
   plataformas?: IntegrationKey[];
+  /** 'barras' desenha colunas (ex.: leads por dia); padrão 'area'. */
+  tipo?: 'area' | 'barras';
 }
 
 const LARGURA = 531; // A4 (595) menos o padding horizontal da página (2 × 32)
@@ -59,7 +63,8 @@ function escalaComIntervalos(maximo: number, intervalos: number) {
   const potencia = 10 ** Math.floor(Math.log10(bruto));
   const normalizado = bruto / potencia;
   const passoBase = normalizado <= 1 ? 1 : normalizado <= 2 ? 2 : normalizado <= 2.5 ? 2.5 : normalizado <= 5 ? 5 : 10;
-  const passo = passoBase * potencia;
+  // o eixo da direita é de contagens (leads, conversões): nunca divide em passos fracionados (0,5 lead não existe)
+  const passo = Math.max(1, passoBase * potencia);
   return { teto: passo * intervalos, passo };
 }
 
@@ -123,7 +128,7 @@ const estilos = StyleSheet.create({
 // Gráfico de área desenhado à mão com as primitivas SVG do @react-pdf/renderer (Recharts não roda no
 // PDF). Reproduz o do dashboard: eixo Y com grade, datas no eixo X, curva suave, legenda e o valor de
 // cada série sobre a linha nas datas que aparecem no eixo.
-export function PdfAreaChart({ titulo, descricao, dados, series, formatarData, plataformas }: PdfAreaChartProps) {
+export function PdfAreaChart({ titulo, descricao, dados, series, formatarData, plataformas, tipo = 'area' }: PdfAreaChartProps) {
   const cabecalho = (
     <View style={estilos.cabecalho}>
       <View>
@@ -168,7 +173,14 @@ export function PdfAreaChart({ titulo, descricao, dados, series, formatarData, p
   const passo = passoDoEixo(dados.length);
   const ultimo = dados.length - 1;
 
-  const xDe = (indice: number) => MARGEM.esquerda + (dados.length > 1 ? (indice / ultimo) * larguraUtil : larguraUtil / 2);
+  const formaDe = (serie: SeriePdf) => serie.forma ?? (tipo === 'barras' ? 'barras' : 'area');
+  const ehBarras = series.some((serie) => formaDe(serie) === 'barras');
+  // barras ocupam uma "faixa" por dia (centro da faixa); linhas/áreas vão de ponta a ponta do eixo.
+  const xDe = (indice: number) =>
+    ehBarras
+      ? MARGEM.esquerda + ((indice + 0.5) / dados.length) * larguraUtil
+      : MARGEM.esquerda + (dados.length > 1 ? (indice / ultimo) * larguraUtil : larguraUtil / 2);
+  const larguraDaBarra = Math.min(14, (larguraUtil / dados.length) * 0.7);
   const yDe = (valor: number) => linhaBase - (valor / teto) * alturaUtil;
   const yDaSerie = (serie: SeriePdf, valor: number) => linhaBase - (valor / (serie.eixo === 'direita' ? escalaDireita.teto : teto)) * alturaUtil;
 
@@ -204,7 +216,19 @@ export function PdfAreaChart({ titulo, descricao, dados, series, formatarData, p
             </Text>
           ))}
 
-        {series.map((serie) => {
+        {ehBarras &&
+          series.filter((serie) => formaDe(serie) === 'barras').flatMap((serie) =>
+            dados.flatMap((ponto, indice) => {
+              const valor = valorDe(ponto, serie.chave);
+              if (valor === null) return [];
+              const topo = yDaSerie(serie, valor);
+              return [
+                <Rect key={`b-${serie.chave}-${indice}`} x={xDe(indice) - larguraDaBarra / 2} y={topo} width={larguraDaBarra} height={Math.max(0, linhaBase - topo)} fill={serie.cor} />,
+              ];
+            })
+          )}
+
+        {series.filter((serie) => formaDe(serie) !== 'barras').map((serie) => {
           const pontos = dados.flatMap((ponto, indice): Ponto[] => {
             const valor = valorDe(ponto, serie.chave);
             return valor === null ? [] : [{ x: xDe(indice), y: yDaSerie(serie, valor) }];
@@ -214,7 +238,7 @@ export function PdfAreaChart({ titulo, descricao, dados, series, formatarData, p
           const area = `${linha} L ${pontos[pontos.length - 1].x},${linhaBase} L ${pontos[0].x},${linhaBase} Z`;
           return (
             <G key={serie.chave}>
-              <Path d={area} fill={serie.cor} fillOpacity={0.12} />
+              {formaDe(serie) === 'area' && <Path d={area} fill={serie.cor} fillOpacity={0.12} />}
               <Path d={linha} fill="none" stroke={serie.cor} strokeWidth={1.4} />
             </G>
           );

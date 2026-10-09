@@ -101,7 +101,7 @@ export function CostEntriesSection({ accountId }: CostEntriesSectionProps) {
       <CardHeader>
         <CardTitle>Custos adicionais</CardTitle>
         <CardDescription>
-          Custos avulsos (ex: sessão de fotos do produto) que a mídia não mostra sozinha — somam-se ao custo automático no card "Custo
+          Custos avulsos (ex: sessão de fotos do produto) que a mídia não mostra sozinha, somam-se ao custo automático no card "Custo
           total" do dashboard. O valor é dividido automaticamente: 50% para o Google Ads e 50% para o Meta Ads. A data é a do lançamento.
         </CardDescription>
       </CardHeader>

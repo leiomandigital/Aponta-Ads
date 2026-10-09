@@ -26,7 +26,7 @@ import { CampaignsTable } from '@/features/dashboard/components/CampaignsTable';
 import { PeriodPicker } from '@/features/dashboard/components/PeriodPicker';
 import { ExportPdfButton } from '@/features/export/components/ExportPdfButton';
 import { SyncAllButton } from '@/features/dashboard/components/SyncAllButton';
-import { formatarMoeda, formatarNumero } from '@/utils/formatters';
+import { formatarData, formatarMoeda, formatarNumero } from '@/utils/formatters';
 
 export function DashboardPage() {
   const [aba, setAba] = useState<AbaDashboard>('geral');
@@ -111,20 +111,18 @@ export function DashboardPage() {
     }
   };
 
-  // Custo por conversão (custo total ÷ conversões da plataforma) no eixo da esquerda e conversões por dia no da direita.
+  // Conversões por dia (da própria plataforma) e custo por conversão (custo total ÷ conversões) em gráficos separados.
+  const seriesConversoes: SerieDoGrafico[] = [{ chave: 'conversions', rotulo: 'Conversões por dia', cor: 'var(--series-2)', formatarValor: formatarNumero }];
   const seriesCustoPorConversao: SerieDoGrafico[] = [
     { chave: 'cost_per_conversion', rotulo: 'Custo por conversão', cor: 'var(--series-1)', formatarValor: formatarMoeda },
-    { chave: 'conversions', rotulo: 'Conversões por dia', cor: 'var(--series-2)', formatarValor: formatarNumero, eixo: 'direita' },
   ];
 
-  const seriesSessoesELeads: SerieDoGrafico[] = [
-    { chave: 'sessions', rotulo: 'Sessões', cor: 'var(--series-1)', formatarValor: formatarNumero },
-    { chave: 'leads', rotulo: 'Leads', cor: 'var(--series-2)', formatarValor: formatarNumero, eixo: 'direita' },
-  ];
+  // Sessões (GA4) e leads (RD Station) em gráficos separados — cada um com sua própria escala.
+  const seriesSessoes: SerieDoGrafico[] = [{ chave: 'sessions', rotulo: 'Sessões', cor: 'var(--series-1)', formatarValor: formatarNumero }];
+  const seriesLeads: SerieDoGrafico[] = [{ chave: 'leads', rotulo: 'Leads', cor: 'var(--series-2)', formatarValor: formatarNumero }];
 
   const seriesCustoPorLead: SerieDoGrafico[] = [
     { chave: 'cost_per_lead', rotulo: 'Custo por lead', cor: 'var(--series-1)', formatarValor: formatarMoeda },
-    { chave: 'leads', rotulo: 'Leads por dia', cor: 'var(--series-2)', formatarValor: formatarNumero, eixo: 'direita' },
   ];
 
   const secoesGeral = resolverSecoesGeral();
@@ -151,11 +149,20 @@ export function DashboardPage() {
         return (
           <div key={secao} className="grid grid-cols-1 gap-4">
             <ChartAreaInteractive
-              titulo="Sessões e leads"
-              plataformas={['ga4', 'rd_station']}
+              titulo="Sessões"
+              plataformas={['ga4']}
               descricao="Tendência no período selecionado"
               dados={serieSessoesELeads}
-              series={seriesSessoesELeads}
+              series={seriesSessoes}
+              carregando={carregando}
+            />
+            <ChartAreaInteractive
+              titulo="Leads"
+              tipo="barras"
+              plataformas={['rd_station']}
+              descricao="Tendência no período selecionado"
+              dados={serieSessoesELeads}
+              series={seriesLeads}
               carregando={carregando}
             />
             <ChartAreaInteractive
@@ -170,14 +177,25 @@ export function DashboardPage() {
         );
       case 'grafico_sessoes_leads':
         return (
-          <ChartAreaInteractive
-            key={secao}
-            titulo="Sessões e leads"
-            descricao="Tendência no período selecionado"
-            dados={serieSessoesELeads}
-            series={seriesSessoesELeads}
-            carregando={carregando}
-          />
+          <div key={secao} className="grid grid-cols-1 gap-4">
+            <ChartAreaInteractive
+              titulo="Sessões"
+              plataformas={['ga4']}
+              descricao="Tendência no período selecionado"
+              dados={serieSessoesELeads}
+              series={seriesSessoes}
+              carregando={carregando}
+            />
+            <ChartAreaInteractive
+              titulo="Leads"
+              tipo="barras"
+              plataformas={['rd_station']}
+              descricao="Tendência no período selecionado"
+              dados={serieSessoesELeads}
+              series={seriesLeads}
+              carregando={carregando}
+            />
+          </div>
         );
       case 'caminhos':
         return <CaminhosCard key={secao} caminhos={jornadaDoLead.caminhos} carregando={carregando} />;
@@ -251,6 +269,13 @@ export function DashboardPage() {
               <AccountMultiSelect contas={contasAtivas} selecionadas={contasSelecionadas} aoAlterar={setContasSelecionadas} />
             )}
 
+            {/* No período personalizado o próprio botão do seletor já mostra o intervalo. */}
+            {periodo !== 'custom' && (
+              <span className="whitespace-nowrap text-xs tabular-nums text-muted-foreground" title="Período selecionado">
+                {formatarData(dataInicio)} a {formatarData(dataFim)}
+              </span>
+            )}
+
             <PeriodPicker
               periodo={periodo}
               intervaloPersonalizado={intervaloPersonalizado}
@@ -280,6 +305,15 @@ export function DashboardPage() {
               comparacaoMidia={comparacaoMidia}
               detalhamentoCusto={detalhamentoCusto}
               comparacaoCustoDetalhado={comparacaoCustoDetalhado}
+              carregando={carregando}
+            />
+
+            <ChartAreaInteractive
+              titulo="Conversões por dia"
+              tipo="barras"
+              descricao="Tendência no período selecionado"
+              dados={serieCustoPorConversao}
+              series={seriesConversoes}
               carregando={carregando}
             />
 

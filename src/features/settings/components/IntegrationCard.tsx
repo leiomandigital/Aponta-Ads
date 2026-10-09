@@ -151,6 +151,7 @@ export function IntegrationCard({
       {integration.key === 'rd_station' && (
         <RdStationFormLinksDialog
           integrationId={integration.id}
+          contaEmVisualizacao={accountId}
           aberto={dialogoLinksAberto}
           aoFechar={() => setDialogoLinksAberto(false)}
         />

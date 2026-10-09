@@ -158,14 +158,15 @@ export function compararComPeriodoAnterior(atual: number, anterior: number): Com
 
 /** Mesmo número de dias do período informado, imediatamente antes dele — usado na comparação dos cards (app e PDF). */
 export function calcularPeriodoAnterior(dataInicio: string, dataFim: string): { dataInicio: string; dataFim: string } {
-  const inicio = new Date(`${dataInicio}T00:00:00`);
-  const fim = new Date(`${dataFim}T00:00:00`);
+  // Aritmética em UTC sobre datas de calendário: não depende do fuso do navegador nem do servidor.
+  const inicio = new Date(`${dataInicio}T00:00:00Z`);
+  const fim = new Date(`${dataFim}T00:00:00Z`);
   const duracaoDias = Math.round((fim.getTime() - inicio.getTime()) / 86400000) + 1;
 
   const fimAnterior = new Date(inicio);
-  fimAnterior.setDate(fimAnterior.getDate() - 1);
+  fimAnterior.setUTCDate(fimAnterior.getUTCDate() - 1);
   const inicioAnterior = new Date(fimAnterior);
-  inicioAnterior.setDate(inicioAnterior.getDate() - (duracaoDias - 1));
+  inicioAnterior.setUTCDate(inicioAnterior.getUTCDate() - (duracaoDias - 1));
 
   return {
     dataInicio: inicioAnterior.toISOString().slice(0, 10),
@@ -430,6 +431,24 @@ export function agruparSessoesPorPaginaEDispositivo(linhas: LinhaSessaoDetalhada
   };
 }
 
+/**
+ * Normaliza uma página (URL completa do link do formulário, ou caminho do GA4) para poder comparar as duas:
+ * sem domínio, parâmetros nem âncora, sem barra no final (exceto a raiz) e em minúsculas.
+ * Ex.: "https://bestsaude.com.br/DF-cotacao/?x=1" e "/df-cotacao" viram "/df-cotacao".
+ */
+export function normalizarCaminhoDePagina(valor: string | null | undefined): string | null {
+  if (!valor || !valor.trim()) return null;
+  let caminho = valor.trim();
+  try {
+    caminho = new URL(caminho).pathname;
+  } catch {
+    /* não é uma URL completa — já é um caminho */
+  }
+  caminho = caminho.replace(/[?#].*$/, '').toLowerCase();
+  if (!caminho.startsWith('/')) caminho = `/${caminho}`;
+  return caminho.length > 1 ? caminho.replace(/\/+$/, '') : caminho;
+}
+
 export interface LinhaDetalhamentoLead {
   kind: string;
   dim1: string | null;
@@ -444,6 +463,19 @@ export interface CaminhoLead {
   anterior: string | null;
   cadastro: string;
   leads: number;
+}
+
+/**
+ * Páginas do caminho na ordem em que o visitante passou por elas (a última é sempre onde o cadastro aconteceu).
+ * Se a entrada é a própria página do cadastro (chegou direto no formulário), a "página anterior" é a ORIGEM
+ * (ex.: google.com) e vem antes dela; senão a página anterior fica entre a entrada e o cadastro.
+ */
+export function sequenciaDoCaminho(caminho: CaminhoLead): string[] {
+  if (caminho.anterior && caminho.entrada === caminho.cadastro) return [caminho.anterior, caminho.entrada];
+  const paginas = [caminho.entrada];
+  if (caminho.anterior) paginas.push(caminho.anterior);
+  if (caminho.cadastro !== caminho.entrada) paginas.push(caminho.cadastro);
+  return paginas;
 }
 
 export interface JornadaDoLead {

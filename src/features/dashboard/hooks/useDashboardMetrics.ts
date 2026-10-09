@@ -4,7 +4,6 @@ import type { PaginaLinha } from '../components/TopPagesTable';
 import { PERIODOS_DASHBOARD, type AbaDashboard, type PeriodoDashboard } from '@/constants/dashboard.constants';
 import {
   agruparAnalyticsPorDia,
-  agruparCustoPorOrigem,
   agruparSessoesPorPaginaEDispositivo,
   calcularPeriodoAnterior,
   compararComPeriodoAnterior,
@@ -15,8 +14,9 @@ import {
   type JornadaDoLead,
   type LinhaDispositivoAgregada,
 } from '@/utils/metricsAggregation';
+import { paraDataSaoPaulo } from '@/integrations/timezone';
 import { calcularPainelDeMidia, calcularSerieCustoPorConversao, calcularSerieCustoPorLead, calcularSerieSessoesELeads, type LinhaMidiaBruta } from '@/utils/painelCalculos';
-import type { CampaignCostEntry, LeadCostDaily, Platform, Region } from '@/types/database.types';
+import type { CampaignCostEntry, LeadsDiario, Platform, Region } from '@/types/database.types';
 
 interface PontoSerieAnalytics {
   date: string;
@@ -47,22 +47,27 @@ export interface IntervaloPersonalizado {
   fim: Date;
 }
 
+/** Data de calendário (YYYY-MM-DD) de um Date escolhido no seletor — usa o dia local, nunca o UTC (que recuaria/avançaria um dia). */
+function dataLocalParaIso(data: Date): string {
+  return `${data.getFullYear()}-${String(data.getMonth() + 1).padStart(2, '0')}-${String(data.getDate()).padStart(2, '0')}`;
+}
+
+/** Subtrai dias de uma data YYYY-MM-DD (aritmética de calendário, sem depender de fuso). */
+function subtrairDias(data: string, dias: number): string {
+  const resultado = new Date(`${data}T00:00:00Z`);
+  resultado.setUTCDate(resultado.getUTCDate() - dias);
+  return resultado.toISOString().slice(0, 10);
+}
+
 function calcularIntervaloData(periodo: PeriodoDashboard, intervaloPersonalizado: IntervaloPersonalizado | null) {
   if (periodo === 'custom' && intervaloPersonalizado) {
-    return {
-      dataInicio: intervaloPersonalizado.inicio.toISOString().slice(0, 10),
-      dataFim: intervaloPersonalizado.fim.toISOString().slice(0, 10),
-    };
+    return { dataInicio: dataLocalParaIso(intervaloPersonalizado.inicio), dataFim: dataLocalParaIso(intervaloPersonalizado.fim) };
   }
 
+  // "Hoje" é o dia em São Paulo — não o dia UTC, que já vira o seguinte a partir das 21h no horário de Brasília.
   const dias = PERIODOS_DASHBOARD.find((item) => item.valor === periodo)?.dias ?? 30;
-  const fim = new Date();
-  const inicio = new Date();
-  inicio.setDate(inicio.getDate() - dias);
-  return {
-    dataInicio: inicio.toISOString().slice(0, 10),
-    dataFim: fim.toISOString().slice(0, 10),
-  };
+  const hoje = paraDataSaoPaulo(new Date());
+  return { dataInicio: subtrairDias(hoje, dias), dataFim: hoje };
 }
 
 
@@ -98,8 +103,8 @@ export function useDashboardMetrics(
   const [linksFormularios, setLinksFormularios] = useState<Record<string, string>>({});
   const [distribuicaoLeadsAnterior, setDistribuicaoLeadsAnterior] = useState<DistribuicaoDeLeads>(DISTRIBUICAO_VAZIA);
   const [leadsRecentes, setLeadsRecentes] = useState<LeadRecente[]>([]);
-  const [custoPorLead, setCustoPorLead] = useState<LeadCostDaily[]>([]);
-  const [custoPorLeadAnterior, setCustoPorLeadAnterior] = useState<LeadCostDaily[]>([]);
+  const [custoPorLead, setCustoPorLead] = useState<LeadsDiario[]>([]);
+  const [custoPorLeadAnterior, setCustoPorLeadAnterior] = useState<LeadsDiario[]>([]);
   const [lancamentosCustoAtual, setLancamentosCustoAtual] = useState<CampaignCostEntry[]>([]);
   const [lancamentosCustoAnterior, setLancamentosCustoAnterior] = useState<CampaignCostEntry[]>([]);
 
@@ -160,8 +165,8 @@ export function useDashboardMetrics(
         buscaGeral ? dashboardService.obterLeadsRecentes(filtrosAnalytics) : Promise.resolve([]),
         buscaGeral ? dashboardService.obterDistribuicaoDeLeads(filtrosAnalytics) : Promise.resolve(DISTRIBUICAO_VAZIA),
         buscaGeral ? dashboardService.obterDistribuicaoDeLeads(filtrosAnalyticsAnterior) : Promise.resolve(DISTRIBUICAO_VAZIA),
-        buscaGeral ? dashboardService.obterCustoPorLeadPorOrigem(filtrosAnalytics) : Promise.resolve([]),
-        buscaGeral ? dashboardService.obterCustoPorLeadPorOrigem(filtrosAnalyticsAnterior) : Promise.resolve([]),
+        buscaGeral ? dashboardService.obterLeadsPorDia(filtrosAnalytics) : Promise.resolve([]),
+        buscaGeral ? dashboardService.obterLeadsPorDia(filtrosAnalyticsAnterior) : Promise.resolve([]),
         buscaGeral ? dashboardService.obterLinksDeFormularios() : Promise.resolve({} as Record<string, string>),
       ]);
 
@@ -251,7 +256,6 @@ export function useDashboardMetrics(
     () => calcularSerieCustoPorLead(custoPorLead, linhasMidiaAtual, lancamentosCustoAtual, dataInicio, dataFim),
     [custoPorLead, linhasMidiaAtual, lancamentosCustoAtual, dataInicio, dataFim]
   );
-  const custoPorOrigem = useMemo(() => agruparCustoPorOrigem(custoPorLead), [custoPorLead]);
 
   const comparacaoAnalytics = useMemo(() => {
     if (!metricasAnalyticsAtual || !metricasAnalyticsAnterior) return null;
@@ -283,7 +287,6 @@ export function useDashboardMetrics(
     distribuicaoLeads,
     distribuicaoLeadsAnterior,
     linksFormularios,
-    custoPorOrigem,
     comparativoPlataformas,
     leadsRecentes,
     custoPorLead,

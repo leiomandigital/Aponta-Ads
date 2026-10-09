@@ -1,7 +1,7 @@
 // Cálculos do painel compartilhados entre o dashboard (useDashboardMetrics.ts) e o PDF
 // (api/export/pdf.ts) — é isso que garante que o PDF mostre exatamente os mesmos números da tela.
 // Imports relativos com .js: este arquivo também é alcançado pelo bundler da Vercel a partir de api/.
-import type { AggregatedMetrics, CampaignCostEntry, CostBreakdown, LeadCostDaily } from '../types/database.types.js';
+import type { AggregatedMetrics, CampaignCostEntry, CostBreakdown, LeadsDiario } from '../types/database.types.js';
 import {
   agruparAnalyticsPorDia,
   agruparMidiaPorChave,
@@ -185,7 +185,7 @@ export type PontoSessoesELeads = {
  */
 export function calcularSerieSessoesELeads(
   serieAnalytics: Array<{ date: string; sessions: number }>,
-  custoPorLead: LeadCostDaily[],
+  custoPorLead: LeadsDiario[],
   dataInicio: string,
   dataFim: string
 ): PontoSessoesELeads[] {
@@ -244,7 +244,7 @@ export type PontoCustoPorLead = {
  * ÷ leads do RD Station no dia. Todos os dias do período entram: sem lead, o custo por lead é null e os leads são 0.
  */
 export function calcularSerieCustoPorLead(
-  custoPorLead: LeadCostDaily[],
+  custoPorLead: LeadsDiario[],
   linhasMidia: LinhaMidiaBruta[],
   lancamentos: CampaignCostEntry[],
   dataInicio: string,
@@ -268,7 +268,7 @@ export function calcularSerieCustoPorLead(
   });
 }
 
-const somarLeads = (linhas: LeadCostDaily[]) => linhas.reduce((soma, linha) => soma + linha.leads_count, 0);
+const somarLeads = (linhas: LeadsDiario[]) => linhas.reduce((soma, linha) => soma + linha.leads_count, 0);
 
 /** Card "Leads" (RD Station) e card "CPL" (custo total ÷ leads), com a comparação do período anterior. */
 export function calcularLeadsECpl({
@@ -277,8 +277,8 @@ export function calcularLeadsECpl({
   detalhamentoCusto,
   comparacaoCustoDetalhado,
 }: {
-  custoPorLead: LeadCostDaily[];
-  custoPorLeadAnterior?: LeadCostDaily[];
+  custoPorLead: LeadsDiario[];
+  custoPorLeadAnterior?: LeadsDiario[];
   detalhamentoCusto?: CostBreakdown | null;
   comparacaoCustoDetalhado?: { costTotal: ComparacaoPeriodo } | null;
 }) {

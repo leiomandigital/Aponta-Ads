@@ -84,8 +84,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ehGeral ? consultas.obterLinhasDeAnalytics(filtrosAnalyticsAnterior) : Promise.resolve([]),
       ehGeral ? consultas.obterJornadaDoLead(filtrosAnalytics) : Promise.resolve(JORNADA_VAZIA),
       ehGeral ? consultas.obterDistribuicaoDeLeads(filtrosAnalytics) : Promise.resolve(DISTRIBUICAO_VAZIA),
-      ehGeral ? consultas.obterCustoPorLeadPorOrigem(filtrosAnalytics) : Promise.resolve([]),
-      ehGeral ? consultas.obterCustoPorLeadPorOrigem(filtrosAnalyticsAnterior) : Promise.resolve([]),
+      ehGeral ? consultas.obterLeadsPorDia(filtrosAnalytics) : Promise.resolve([]),
+      ehGeral ? consultas.obterLeadsPorDia(filtrosAnalyticsAnterior) : Promise.resolve([]),
       ehGeral ? consultas.obterLinksDeFormularios() : Promise.resolve({} as Record<string, string>),
     ]);
 
