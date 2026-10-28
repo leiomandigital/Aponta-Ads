@@ -20,6 +20,7 @@ const FUNCOES = [
   'api/integrations/list-assets.ts',
   'api/integrations/save-assets.ts',
   'api/export/pdf.ts',
+  'api/analytics/usuarios.ts',
 ];
 
 /** Marca qualquer import que não comece com "." ou "/" como externo (pacotes do node_modules). */

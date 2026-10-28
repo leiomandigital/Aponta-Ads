@@ -4,30 +4,44 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DataTable } from '@/components/shared/DataTable';
 import { useCostEntries } from '../hooks/useCostEntries';
 import { formatarData, formatarMoeda } from '@/utils/formatters';
 import type { CampaignCostEntry } from '@/types/database.types';
 import type { ColumnDef } from '@tanstack/react-table';
 
+type PlataformaDoLancamento = 'google_ads' | 'meta_ads';
+type TipoDoLancamento = 'porcentagem' | 'valor';
+
 interface FormularioLancamento {
+  platform: PlataformaDoLancamento;
+  kind: TipoDoLancamento;
   amount: string;
   description: string;
 }
 
-const FORMULARIO_VAZIO: FormularioLancamento = { amount: '', description: '' };
+// Porcentagem é o tipo padrão; valor em R$ só quando o usuário seleciona.
+const FORMULARIO_VAZIO: FormularioLancamento = { platform: 'google_ads', kind: 'porcentagem', amount: '', description: '' };
+
+const ROTULO_PLATAFORMA: Record<string, string> = {
+  google_ads: 'Google Ads',
+  meta_ads: 'Meta Ads',
+  todas: 'Google Ads + Meta Ads (50/50)',
+};
+
+const formatarPercentual = (valor: number) => `${valor.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`;
 
 interface CostEntriesSectionProps {
   accountId: string;
 }
 
 /**
- * Custos avulsos manuais (ex: sessão de fotos do produto) que a mídia não
- * mostra sozinha — somam-se ao custo automático no dashboard em cascata:
- * Custo de mídia → +taxa automática da plataforma → +custos avulsos daqui
- * (ver TAXA_PLATAFORMA_META em metricsAggregation.ts pra taxa). O lançamento
- * é só valor + descrição: a data é a do lançamento e o valor é dividido 50%
- * Google Ads / 50% Meta Ads (ver dashboardService.obterLancamentosDeCusto).
+ * Custos adicionais por plataforma (Google Ads ou Meta Ads), em porcentagem (padrão) ou valor em R$:
+ *  - Google Ads: o adicional incide sobre o custo de mídia;
+ *  - Meta Ads: o adicional incide sobre o custo com taxas (mídia + taxa automática).
+ * O cálculo vive em valorDoLancamento (metricsAggregation.ts) e entra no "Custo total" do dashboard e do PDF.
+ * A data é a do lançamento; o adicional vale para os períodos que incluem essa data.
  */
 export function CostEntriesSection({ accountId }: CostEntriesSectionProps) {
   const { entradas, carregando, salvando, erro, criar, atualizar, excluir } = useCostEntries(accountId);
@@ -36,10 +50,18 @@ export function CostEntriesSection({ accountId }: CostEntriesSectionProps) {
   const [editandoId, setEditandoId] = useState<string | null>(null);
   const [erroValidacao, setErroValidacao] = useState<string | null>(null);
 
+  const ehPorcentagem = form.kind === 'porcentagem';
+
   const iniciarEdicao = (entrada: CampaignCostEntry) => {
     setEditandoId(entrada.id);
     setErroValidacao(null);
-    setForm({ amount: String(entrada.amount), description: entrada.description ?? '' });
+    setForm({
+      // lançamento antigo "50/50" não existe mais como opção: ao editar, o usuário escolhe uma plataforma
+      platform: entrada.platform === 'meta_ads' ? 'meta_ads' : 'google_ads',
+      kind: entrada.kind ?? 'valor',
+      amount: String(entrada.amount).replace('.', ','),
+      description: entrada.description ?? '',
+    });
   };
 
   const cancelarEdicao = () => {
@@ -49,14 +71,24 @@ export function CostEntriesSection({ accountId }: CostEntriesSectionProps) {
   };
 
   const handleSalvar = async () => {
-    const valor = Number(form.amount.replace(',', '.'));
+    const valor = Number(form.amount.replace(/\./g, '').replace(',', '.'));
     if (!valor || valor <= 0) {
-      setErroValidacao('Informe um valor maior que zero.');
+      setErroValidacao(ehPorcentagem ? 'Informe uma porcentagem maior que zero.' : 'Informe um valor maior que zero.');
+      return;
+    }
+    if (ehPorcentagem && valor > 1000) {
+      setErroValidacao('A porcentagem informada é muito alta — confira o valor.');
       return;
     }
     setErroValidacao(null);
 
-    const dados = { account_id: accountId, amount: valor, description: form.description.trim() || null };
+    const dados = {
+      account_id: accountId,
+      platform: form.platform,
+      kind: form.kind,
+      amount: valor,
+      description: form.description.trim() || null,
+    };
 
     const sucesso = editandoId ? await atualizar(editandoId, dados) : await criar(dados);
     if (sucesso) {
@@ -75,7 +107,13 @@ export function CostEntriesSection({ accountId }: CostEntriesSectionProps) {
   const colunas = useMemo<ColumnDef<CampaignCostEntry, unknown>[]>(
     () => [
       { accessorKey: 'date', header: 'Data', cell: ({ row }) => formatarData(row.original.date) },
-      { accessorKey: 'amount', header: 'Valor', cell: ({ row }) => formatarMoeda(row.original.amount) },
+      { accessorKey: 'platform', header: 'Plataforma', cell: ({ row }) => ROTULO_PLATAFORMA[row.original.platform] ?? row.original.platform },
+      {
+        accessorKey: 'amount',
+        header: 'Adicional',
+        cell: ({ row }) =>
+          row.original.kind === 'porcentagem' ? formatarPercentual(row.original.amount) : formatarMoeda(row.original.amount),
+      },
       { accessorKey: 'description', header: 'Descrição', cell: ({ row }) => row.original.description ?? '—' },
       {
         id: 'acoes',
@@ -101,26 +139,63 @@ export function CostEntriesSection({ accountId }: CostEntriesSectionProps) {
       <CardHeader>
         <CardTitle>Custos adicionais</CardTitle>
         <CardDescription>
-          Custos avulsos (ex: sessão de fotos do produto) que a mídia não mostra sozinha, somam-se ao custo automático no card "Custo
-          total" do dashboard. O valor é dividido automaticamente: 50% para o Google Ads e 50% para o Meta Ads. A data é a do lançamento.
+          Adicional por plataforma, em porcentagem ou em valor (R$), somado ao "Custo total" do dashboard. No Google Ads ele incide sobre o
+          custo de mídia; no Meta Ads, sobre o custo com taxas. A data é a do lançamento: o adicional vale para os períodos que incluem essa data.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {(erro || erroValidacao) && <p className="text-sm text-destructive">{erro ?? erroValidacao}</p>}
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="valor-lancamento">Valor</Label>
+            <Label>Plataforma</Label>
+            <Select value={form.platform} onValueChange={(valor) => setForm((atual) => ({ ...atual, platform: valor as PlataformaDoLancamento }))}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="google_ads">Google Ads</SelectItem>
+                <SelectItem value="meta_ads">Meta Ads</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label>Tipo do adicional</Label>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                size="sm"
+                className="flex-1"
+                variant={ehPorcentagem ? 'default' : 'outline'}
+                onClick={() => setForm((atual) => ({ ...atual, kind: 'porcentagem' }))}
+              >
+                Porcentagem (%)
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="flex-1"
+                variant={!ehPorcentagem ? 'default' : 'outline'}
+                onClick={() => setForm((atual) => ({ ...atual, kind: 'valor' }))}
+              >
+                Valor (R$)
+              </Button>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="valor-lancamento">{ehPorcentagem ? 'Porcentagem (%)' : 'Valor (R$)'}</Label>
             <Input
               id="valor-lancamento"
               inputMode="decimal"
-              placeholder="0,00"
+              placeholder={ehPorcentagem ? 'Ex: 10' : '0,00'}
               value={form.amount}
               onChange={(evento) => setForm((atual) => ({ ...atual, amount: evento.target.value }))}
             />
           </div>
 
-          <div className="flex flex-col gap-1.5 sm:col-span-2">
+          <div className="flex flex-col gap-1.5">
             <Label htmlFor="descricao-lancamento">Descrição (opcional)</Label>
             <Input
               id="descricao-lancamento"

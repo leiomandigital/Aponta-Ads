@@ -22,6 +22,7 @@ truncate table
   public.sync_logs,
   public.campaign_cost_entries,
   public.analytics_lead_breakdown_daily,
+  public.analytics_traffic_daily,
   public.analytics_sessions_daily,
   public.ad_keyword_performance_daily,
   public.ad_video_metrics_daily,

@@ -81,7 +81,7 @@ async function lerTodasAsLinhas<T>(montar: (opcoes?: { count: 'exact' }) => Cons
  * excluído aqui: desativar a conta que originalmente compartilhou uma
  * integração não deve tirar o dado das demais contas ainda ativas.
  */
-function filtroDeConta(accountIds: string[] | undefined, idsContasInativas: string[] = []): string | null {
+export function filtroDeConta(accountIds: string[] | undefined, idsContasInativas: string[] = []): string | null {
   if (accountIds && accountIds.length > 0) return `account_id.in.(${accountIds.join(',')}),account_id.is.null`;
   if (idsContasInativas.length > 0) return `account_id.is.null,account_id.not.in.(${idsContasInativas.join(',')})`;
   return null;
@@ -164,6 +164,7 @@ export function criarDashboardQueries(supabase: SupabaseClient) {
         adset_name: string | null;
         ad_id: string | null;
         ad_name: string | null;
+        account_id: string | null;
         impressions: number;
         clicks: number;
         cost: number;
@@ -171,7 +172,7 @@ export function criarDashboardQueries(supabase: SupabaseClient) {
       }>((opcoes) => {
         let consulta = supabase
           .from('ad_performance_daily')
-          .select('date, platform, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, impressions, clicks, cost, conversions', opcoes)
+          .select('date, platform, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, account_id, impressions, clicks, cost, conversions', opcoes)
           .gte('date', filtros.dataInicio)
           .lte('date', filtros.dataFim);
         if (filtros.platform) consulta = consulta.eq('platform', filtros.platform);
@@ -202,15 +203,30 @@ export function criarDashboardQueries(supabase: SupabaseClient) {
         obterPaginasDosFormularios(filtros),
       ]);
 
-      // Caminhos até o lead: só os que terminam na página de um formulário das contas em visualização.
-      // As demais dimensões da jornada (origem/mídia etc.) não têm página e seguem inalteradas.
-      const linhasFiltradas = linhas.filter((linha) => {
-        if (linha.kind !== 'caminho') return true;
-        const paginaDoCadastro = normalizarCaminhoDePagina(linha.dim2);
-        return paginaDoCadastro !== null && paginasDosFormularios.has(paginaDoCadastro);
+      const totalDe = (kind: string) => linhas.filter((linha) => linha.kind === kind).reduce((soma, linha) => soma + linha.leads, 0);
+      // Origem/mídia por formulário só quando o histórico do tipo novo (com a página) já cobre o do antigo — enquanto o
+      // backfill não termina, continua o tipo antigo (todos os cadastros do GA4) para a tabela nunca ficar pela metade.
+      const totalOrigemPagina = totalDe('origem_pagina');
+      const usarOrigemPorFormulario = totalOrigemPagina > 0 && totalOrigemPagina >= totalDe('origem') * 0.99;
+
+      const noFormulario = (pagina: string | null | undefined) => {
+        const normalizada = normalizarCaminhoDePagina(pagina);
+        return normalizada !== null && paginasDosFormularios.has(normalizada);
+      };
+
+      // Só entram os cadastros cuja página é a de um formulário das contas em visualização (caminhos e origem/mídia).
+      // As demais dimensões da jornada (idade, local etc.) não têm página e seguem inalteradas.
+      const linhasFiltradas = linhas.flatMap((linha): LinhaDetalhamentoLead[] => {
+        if (linha.kind === 'caminho') return noFormulario(linha.dim2) ? [linha] : [];
+        if (linha.kind === 'origem_pagina') return usarOrigemPorFormulario && noFormulario(linha.dim3) ? [{ ...linha, kind: 'origem', dim3: null }] : [];
+        if (linha.kind === 'origem') return usarOrigemPorFormulario ? [] : [linha];
+        return [linha];
       });
 
-      return agruparJornadaDoLead(linhasFiltradas);
+      // Origem/mídia sem filtro (chave desligada no dashboard): o tipo antigo, com todos os cadastros do GA4.
+      const origensTodas = agruparJornadaDoLead(linhas.filter((linha) => linha.kind === 'origem')).origens;
+
+      return { ...agruparJornadaDoLead(linhasFiltradas), origensTodas, origensFiltradasPorFormulario: usarOrigemPorFormulario };
     },
 
     /** Link público de cada formulário do RD Station (external_id = identificador da conversão), cadastrado em Configurações. */
@@ -292,7 +308,7 @@ export function criarDashboardQueries(supabase: SupabaseClient) {
       const data = await lerTodasAsLinhas<CampaignCostEntry>((opcoes) => {
         let consulta = supabase
           .from('campaign_cost_entries')
-          .select('id, account_id, platform, campaign_id, amount, date, description, created_at', opcoes)
+          .select('id, account_id, platform, campaign_id, kind, amount, date, description, created_at', opcoes)
           .gte('date', filtros.dataInicio)
           .lte('date', filtros.dataFim);
         // 'todas' entra em qualquer plataforma: é dividido 50/50 logo abaixo.
@@ -303,7 +319,8 @@ export function criarDashboardQueries(supabase: SupabaseClient) {
 
       const divididos = data.flatMap((entrada): CampaignCostEntry[] =>
         entrada.platform === 'todas'
-          ? (['google_ads', 'meta_ads'] as const).map((platform) => ({ ...entrada, id: `${entrada.id}:${platform}`, platform, amount: entrada.amount / 2 }))
+          ? // lançamento antigo, dividido 50/50 (sempre em R$)
+            (['google_ads', 'meta_ads'] as const).map((platform) => ({ ...entrada, id: `${entrada.id}:${platform}`, platform, amount: entrada.amount / 2 }))
           : [entrada]
       );
       return filtros.platform ? divididos.filter((entrada) => entrada.platform === filtros.platform) : divididos;

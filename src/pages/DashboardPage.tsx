@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AppLayout } from '@/components/shared/AppLayout';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Switch } from '@/components/ui/switch';
 import {
   ABAS_DASHBOARD,
   resolverSecoesGeral,
@@ -31,6 +32,8 @@ import { formatarData, formatarMoeda, formatarNumero } from '@/utils/formatters'
 export function DashboardPage() {
   const [aba, setAba] = useState<AbaDashboard>('geral');
   const [periodo, setPeriodo] = useState<PeriodoDashboard>('30d');
+  // Origem/mídia: ligado (padrão) mostra só os cadastros dos formulários das contas; desligado, todos os do GA4.
+  const [origemPorFormulario, setOrigemPorFormulario] = useState(true);
   const [intervaloPersonalizado, setIntervaloPersonalizado] = useState<IntervaloPersonalizado | null>(null);
   // null = todas as contas (padrão); lista = só essas, somadas.
   const [contasSelecionadas, setContasSelecionadas] = useState<string[] | null>(null);
@@ -209,8 +212,25 @@ export function DashboardPage() {
       case 'origem_midia':
         return (
           <section key={secao} className="flex flex-col gap-3">
-            <TituloSecao titulo="Origem/mídia" plataformas={['ga4']} />
-            <OrigemMidiaTable itens={jornadaDoLead.origens} carregando={carregando} mensagemVazio={mensagemVazio} />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <TituloSecao titulo="Origem/mídia" plataformas={['ga4']} />
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+                <Switch checked={origemPorFormulario} onCheckedChange={setOrigemPorFormulario} aria-label="Filtrar pelos formulários das contas" />
+                Só formulários das contas
+              </label>
+            </div>
+            <OrigemMidiaTable
+              itens={origemPorFormulario ? jornadaDoLead.origens : jornadaDoLead.origensTodas}
+              carregando={carregando}
+              mensagemVazio={mensagemVazio}
+            />
+            <p className="text-xs text-muted-foreground">
+              {!origemPorFormulario
+                ? 'Todos os cadastros do GA4, de todas as contas, sem filtro por formulário.'
+                : jornadaDoLead.origensFiltradasPorFormulario
+                  ? 'Só os cadastros dos formulários (com link cadastrado) das contas selecionadas.'
+                  : 'Todos os cadastros do GA4, sem filtro por conta — o filtro por formulário passa a valer quando o histórico terminar de sincronizar.'}
+            </p>
           </section>
         );
       case 'dispositivos':
@@ -260,6 +280,7 @@ export function DashboardPage() {
                 aba,
                 accountIds: contasSelecionadas ?? undefined,
                 accountName: rotuloContas,
+                origemPorFormulario,
                 dataInicio,
                 dataFim,
               }}

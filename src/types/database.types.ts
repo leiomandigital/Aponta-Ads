@@ -137,6 +137,8 @@ export interface CampaignCostEntry {
   platform: Platform | 'todas';
   /** null = lançamento geral da plataforma/conta no período, não atribuído a uma campanha específica. */
   campaign_id: string | null;
+  /** 'valor' = amount em R$; 'porcentagem' = amount é o percentual (10 = 10%) sobre o custo com taxas da plataforma. */
+  kind: 'valor' | 'porcentagem';
   amount: number;
   date: string;
   description: string | null;

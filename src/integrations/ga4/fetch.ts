@@ -1,3 +1,4 @@
+import type { UsuariosDoPeriodo } from '../../utils/metricsAggregation.js';
 import type { GA4Credentials } from './auth.js';
 
 export interface GA4Row {
@@ -88,6 +89,48 @@ export function buscarSessoes(credenciais: GA4Credentials, sinceDate: string, un
 }
 
 /**
+ * Sessões e usuários por dia e dispositivo, SEM página: com pagePath na consulta, o GA4 conta a mesma sessão uma vez
+ * para cada página que ela abriu, e a soma passa do total real. Sem a página, cada sessão cai numa linha só — é este
+ * o total que o dashboard e o PDF mostram (analytics_traffic_daily).
+ */
+export function buscarTrafego(credenciais: GA4Credentials, sinceDate: string, untilDate: string): Promise<GA4Row[]> {
+  return executarRelatorio(
+    credenciais,
+    sinceDate,
+    untilDate,
+    [{ name: 'sessions' }, { name: 'totalUsers' }],
+    'tráfego por dispositivo',
+    undefined,
+    [{ name: 'date' }, { name: 'deviceCategory' }]
+  );
+}
+
+/**
+ * Usuários ÚNICOS do período inteiro (a mesma pessoa conta uma vez, mesmo voltando em vários dias) — o que o GA4
+ * mostra na tela. Não dá para obter somando os usuários de cada dia, por isso é uma consulta própria, sem a dimensão
+ * de data. O total sai de uma consulta sem dimensão alguma: a soma dos dispositivos pode passar dele em 1 ou 2 quando
+ * a mesma pessoa usa dois aparelhos.
+ */
+export async function buscarUsuariosDoPeriodo(
+  credenciais: GA4Credentials,
+  sinceDate: string,
+  untilDate: string
+): Promise<UsuariosDoPeriodo> {
+  const metricas = [{ name: 'totalUsers' }];
+  const [linhasPorDispositivo, linhasTotal] = await Promise.all([
+    executarRelatorio(credenciais, sinceDate, untilDate, metricas, 'usuários por dispositivo', undefined, [{ name: 'deviceCategory' }]),
+    executarRelatorio(credenciais, sinceDate, untilDate, metricas, 'usuários do período', undefined, []),
+  ]);
+
+  const porDispositivo: Record<string, number> = {};
+  for (const linha of linhasPorDispositivo) {
+    porDispositivo[linha.dimensionValues[0]?.value ?? ''] = Number(linha.metricValues[0]?.value ?? 0);
+  }
+
+  return { total: Number(linhasTotal[0]?.metricValues[0]?.value ?? 0), porDispositivo };
+}
+
+/**
  * Consulta separada porque filtrar por eventName restringe todas as métricas
  * da consulta — não dá para pedir sessões e leads juntos.
  */
@@ -97,13 +140,15 @@ export function buscarLeads(credenciais: GA4Credentials, sinceDate: string, unti
   });
 }
 
-export type TipoDetalhamentoLead = 'caminho' | 'origem' | 'idade' | 'genero' | 'local' | 'retorno' | 'tempo';
+export type TipoDetalhamentoLead = 'caminho' | 'origem' | 'origem_pagina' | 'idade' | 'genero' | 'local' | 'retorno' | 'tempo';
 
 // Primeira dimensão sempre `date` (grão diário); as demais são as dim1/dim2/dim3 gravadas em
 // analytics_lead_breakdown_daily. Ver migration 046.
 const CONSULTAS_DETALHAMENTO_LEAD: Array<{ tipo: TipoDetalhamentoLead; dimensoes: string[] }> = [
   { tipo: 'caminho', dimensoes: ['landingPage', 'pagePath', 'pageReferrer'] }, // entrada, cadastro, página anterior
   { tipo: 'origem', dimensoes: ['sessionSource', 'sessionMedium'] },
+  // origem + mídia + página onde o cadastro disparou — permite filtrar a tabela Origem/mídia pelos formulários de cada conta
+  { tipo: 'origem_pagina', dimensoes: ['sessionSource', 'sessionMedium', 'pagePath'] },
   { tipo: 'idade', dimensoes: ['userAgeBracket'] },
   { tipo: 'genero', dimensoes: ['userGender'] },
   { tipo: 'local', dimensoes: ['region', 'city'] },

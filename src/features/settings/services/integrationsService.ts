@@ -48,6 +48,8 @@ async function reatribuirHistorico(key: IntegrationKey, contaOrigem: string | nu
   } else if (key === 'ga4') {
     const { error } = await aplicarFiltroOrigem(supabase.from('analytics_sessions_daily').update({ account_id: contaDestino }));
     if (error) throw new Error(error.message);
+    const { error: erroTrafego } = await aplicarFiltroOrigem(supabase.from('analytics_traffic_daily').update({ account_id: contaDestino }));
+    if (erroTrafego) throw new Error(erroTrafego.message);
     const { error: erroDetalhamento } = await aplicarFiltroOrigem(
       supabase.from('analytics_lead_breakdown_daily').update({ account_id: contaDestino })
     );

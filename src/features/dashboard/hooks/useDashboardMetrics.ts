@@ -5,6 +5,8 @@ import { PERIODOS_DASHBOARD, type AbaDashboard, type PeriodoDashboard } from '@/
 import {
   agruparAnalyticsPorDia,
   agruparSessoesPorPaginaEDispositivo,
+  aplicarUsuariosDoPeriodoNosDispositivos,
+  aplicarUsuariosDoPeriodoNosTotais,
   calcularPeriodoAnterior,
   compararComPeriodoAnterior,
   DISTRIBUICAO_VAZIA,
@@ -154,6 +156,8 @@ export function useDashboardMetrics(
         custo,
         custoAnterior,
         links,
+        usuariosAtual,
+        usuariosAnterior,
       ] = await Promise.all([
         buscaAnalytics ? dashboardService.obterLinhasDeAnalytics(filtrosAnalytics) : Promise.resolve([]),
         buscaAnalytics ? dashboardService.obterLinhasDeAnalytics(filtrosAnalyticsAnterior) : Promise.resolve([]),
@@ -168,11 +172,14 @@ export function useDashboardMetrics(
         buscaGeral ? dashboardService.obterLeadsPorDia(filtrosAnalytics) : Promise.resolve([]),
         buscaGeral ? dashboardService.obterLeadsPorDia(filtrosAnalyticsAnterior) : Promise.resolve([]),
         buscaGeral ? dashboardService.obterLinksDeFormularios() : Promise.resolve({} as Record<string, string>),
+        // Usuários únicos do período: vêm direto do GA4 (a soma dos usuários de cada dia conta quem volta de novo).
+        buscaAnalytics ? dashboardService.obterUsuariosDoPeriodo(filtrosAnalytics) : Promise.resolve(null),
+        buscaAnalytics ? dashboardService.obterUsuariosDoPeriodo(filtrosAnalyticsAnterior) : Promise.resolve(null),
       ]);
 
       if (buscaAnalytics) {
-        setMetricasAnalyticsAtual(somarTotaisAnalytics(linhasAnalytics));
-        setMetricasAnalyticsAnterior(somarTotaisAnalytics(linhasAnalyticsAnteriores));
+        setMetricasAnalyticsAtual(aplicarUsuariosDoPeriodoNosTotais(somarTotaisAnalytics(linhasAnalytics), usuariosAtual));
+        setMetricasAnalyticsAnterior(aplicarUsuariosDoPeriodoNosTotais(somarTotaisAnalytics(linhasAnalyticsAnteriores), usuariosAnterior));
         setSerieTemporalAnalytics(agruparAnalyticsPorDia(linhasAnalytics));
       } else {
         setMetricasAnalyticsAtual(null);
@@ -183,7 +190,7 @@ export function useDashboardMetrics(
       if (buscaGeral) {
         const detalhes = agruparSessoesPorPaginaEDispositivo(linhasAnalytics);
         setPaginas(detalhes.paginas);
-        setDispositivos(detalhes.dispositivos);
+        setDispositivos(aplicarUsuariosDoPeriodoNosDispositivos(detalhes.dispositivos, usuariosAtual));
         setJornadaDoLead(jornada);
       } else {
         setPaginas([]);

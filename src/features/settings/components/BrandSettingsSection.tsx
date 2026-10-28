@@ -83,9 +83,7 @@ export function BrandSettingsSection() {
               {enviando ? 'Salvando...' : 'Salvar'}
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground">
-            Sem esse campo preenchido, o sistema aparece como &quot;{NOME_PADRAO_SISTEMA}&quot;.
-          </p>
+         
         </form>
       </CardContent>
     </Card>

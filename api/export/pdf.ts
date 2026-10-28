@@ -3,7 +3,8 @@ import { renderToBuffer } from '@react-pdf/renderer';
 import { criarSupabaseAdminClient } from '../../src/lib/supabaseAdminClient.js';
 import { ReportDocument } from '../../src/features/export/pdf/ReportDocument.js';
 import { autenticarUsuario } from '../_lib/auth.js';
-import { buscarConfiguracoesDeMarca } from '../_lib/reportData.js';
+import { buscarConfiguracoesDeMarca, buscarIdsContasInativas } from '../_lib/reportData.js';
+import { obterUsuariosDoPeriodoGa4 } from '../../src/integrations/ga4/usuariosDoPeriodo.js';
 import { criarDashboardQueries } from '../../src/services/dashboardQueries.js';
 import { calcularPainelDeAnalytics, calcularPainelDeMidia, calcularSerieCustoPorConversao, calcularSerieCustoPorLead, calcularSerieSessoesELeads } from '../../src/utils/painelCalculos.js';
 import { calcularPeriodoAnterior, DISTRIBUICAO_VAZIA, JORNADA_VAZIA } from '../../src/utils/metricsAggregation.js';
@@ -26,7 +27,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(401).json({ error: 'Não autenticado' });
   }
 
-  const { aba, accountIds, accountName, dataInicio, dataFim } = req.body ?? {};
+  const { aba, accountIds, accountName, dataInicio, dataFim, origemPorFormulario } = req.body ?? {};
 
   if (!ABAS_VALIDAS.includes(aba) || !dataInicio || !dataFim) {
     return res.status(400).json({ error: 'Parâmetros de exportação inválidos' });
@@ -47,12 +48,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Calculado aqui, nunca recebido do cliente: o PDF de "todas as contas"
     // precisa somar só as contas ativas (mais as compartilhadas) — igual ao
     // dashboard. Só busca quando faz diferença (accountIds não informado).
-    let idsContasInativas: string[] = [];
-    if (!accountIdsFiltro) {
-      const { data: contasInativas, error: erroContas } = await supabaseAdmin.from('accounts').select('id').eq('is_active', false);
-      if (erroContas) throw new Error(erroContas.message);
-      idsContasInativas = (contasInativas ?? []).map((conta) => conta.id as string);
-    }
+    const idsContasInativas = accountIdsFiltro ? [] : await buscarIdsContasInativas(supabaseAdmin);
 
     // As mesmas consultas e os mesmos cálculos do dashboard (dashboardQueries + painelCalculos): o PDF
     // mostra exatamente o que está na tela para a aba, o período e as contas selecionados.
@@ -75,6 +71,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       custoPorLead,
       custoPorLeadAnterior,
       linksFormularios,
+      usuariosAtual,
+      usuariosAnterior,
     ] = await Promise.all([
       consultas.obterLinhasDeMidia(filtrosMidia),
       consultas.obterLinhasDeMidia(filtrosMidiaAnterior),
@@ -87,7 +85,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ehGeral ? consultas.obterLeadsPorDia(filtrosAnalytics) : Promise.resolve([]),
       ehGeral ? consultas.obterLeadsPorDia(filtrosAnalyticsAnterior) : Promise.resolve([]),
       ehGeral ? consultas.obterLinksDeFormularios() : Promise.resolve({} as Record<string, string>),
+      // Usuários únicos do período direto do GA4, como no dashboard; se o GA4 falhar, o PDF segue com a soma dos dias.
+      ehGeral ? obterUsuariosDoPeriodoGa4(supabaseAdmin, filtrosAnalytics).catch(() => null) : Promise.resolve(null),
+      ehGeral ? obterUsuariosDoPeriodoGa4(supabaseAdmin, filtrosAnalyticsAnterior).catch(() => null) : Promise.resolve(null),
     ]);
+
+    const painelAnalytics = ehGeral
+      ? calcularPainelDeAnalytics(linhasAnalytics, linhasAnalyticsAnteriores, { atual: usuariosAtual, anterior: usuariosAnterior })
+      : undefined;
 
     const painelMidia = calcularPainelDeMidia({
       linhasAtual: linhasMidia,
@@ -105,17 +110,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         nomeDoSistema: configuracoes?.system_name,
         logoUrl: configuracoes?.client_logo_url,
         painelMidia,
-        painelAnalytics: ehGeral ? calcularPainelDeAnalytics(linhasAnalytics, linhasAnalyticsAnteriores) : undefined,
+        painelAnalytics,
         custoPorLead,
         custoPorLeadAnterior,
-        serieSessoesELeads: ehGeral
-          ? calcularSerieSessoesELeads(calcularPainelDeAnalytics(linhasAnalytics, linhasAnalyticsAnteriores).serieTemporalAnalytics, custoPorLead, dataInicio, dataFim)
-          : [],
+        serieSessoesELeads: painelAnalytics ? calcularSerieSessoesELeads(painelAnalytics.serieTemporalAnalytics, custoPorLead, dataInicio, dataFim) : [],
         serieCustoPorConversao: ehGeral ? [] : calcularSerieCustoPorConversao(linhasMidia, lancamentos, dataInicio, dataFim),
         serieCustoPorLead: ehGeral ? calcularSerieCustoPorLead(custoPorLead, linhasMidia, lancamentos, dataInicio, dataFim) : [],
         jornadaDoLead,
         distribuicaoLeads,
         linksFormularios,
+        origemPorFormulario: origemPorFormulario !== false,
       })
     );
 

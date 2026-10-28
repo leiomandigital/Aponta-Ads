@@ -211,7 +211,7 @@ export function DispositivosTable({
       { accessorKey: 'device', header: 'Dispositivo' },
       { accessorKey: 'sessions', header: 'Sessões', cell: ({ row }) => formatarNumero(row.original.sessions) },
       { accessorKey: 'users', header: 'Usuários', cell: ({ row }) => formatarNumero(row.original.users) },
-      { accessorKey: 'leads', header: 'Leads', cell: ({ row }) => formatarNumero(row.original.leads) },
+      { accessorKey: 'leads', header: 'Cadastros', cell: ({ row }) => formatarNumero(row.original.leads) },
     ],
     []
   );

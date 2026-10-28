@@ -124,6 +124,32 @@ function aplicarTaxaAutomatica(platform: string, costLiquido: number): number {
 interface LinhaComCusto {
   platform: string;
   cost: number;
+  /** Conta da linha — usada para aplicar um adicional percentual só ao custo da conta que o lançou. */
+  account_id?: string | null;
+}
+
+/** Custo com taxas (mídia + taxa automática) das linhas da plataforma — e da conta, quando o lançamento tem conta. */
+function custoComTaxasDaPlataforma(linhas: LinhaComCusto[], platform: string, accountId: string | null | undefined): number {
+  return linhas
+    .filter((linha) => {
+      if (linha.platform !== platform) return false;
+      // sem conta no lançamento, ou linha sem conta (compartilhada/desconhecida): vale para todas
+      if (!accountId || linha.account_id === undefined || linha.account_id === null) return true;
+      return linha.account_id === accountId;
+    })
+    .reduce((soma, linha) => soma + aplicarTaxaAutomatica(linha.platform, linha.cost), 0);
+}
+
+/**
+ * Valor em R$ de um custo adicional sobre as linhas dadas: 'valor' soma o amount; 'porcentagem' soma amount%
+ * do custo com taxas da MESMA plataforma (e conta) do lançamento — Google Ads sobre o custo de mídia, Meta Ads
+ * sobre o custo com taxas. Várias porcentagens somam entre si (10% + 5% = 15% do mesmo custo, sem juros sobre juros).
+ */
+export function valorDoLancamento(entrada: CampaignCostEntry, linhas: LinhaComCusto[]): number {
+  if (entrada.kind === 'porcentagem') {
+    return (custoComTaxasDaPlataforma(linhas, entrada.platform, entrada.account_id) * entrada.amount) / 100;
+  }
+  return entrada.amount;
 }
 
 /**
@@ -138,7 +164,7 @@ interface LinhaComCusto {
 export function calcularDetalhamentoDeCusto(linhasMidia: LinhaComCusto[], entradasAvulsas: CampaignCostEntry[]): CostBreakdown {
   const costMidia = linhasMidia.reduce((soma, linha) => soma + linha.cost, 0);
   const costComTaxas = linhasMidia.reduce((soma, linha) => soma + aplicarTaxaAutomatica(linha.platform, linha.cost), 0);
-  const custoAvulso = entradasAvulsas.reduce((soma, entrada) => soma + entrada.amount, 0);
+  const custoAvulso = entradasAvulsas.reduce((soma, entrada) => soma + valorDoLancamento(entrada, linhasMidia), 0);
   return { costMidia, costComTaxas, costTotal: costComTaxas + custoAvulso };
 }
 
@@ -401,6 +427,29 @@ export interface LinhaDispositivoAgregada {
   leads: number;
 }
 
+/** Usuários ÚNICOS de um período, vindos direto do GA4 (a mesma pessoa conta uma vez, mesmo voltando em vários dias). */
+export interface UsuariosDoPeriodo {
+  total: number;
+  porDispositivo: Record<string, number>;
+}
+
+/**
+ * analytics_traffic_daily guarda os usuários de cada dia — somar os dias conta quem volta mais de uma vez. Troca esse
+ * total pelo de usuários únicos do período. Sem o dado do GA4 (null: falha na consulta ou sem propriedade), mantém a soma.
+ */
+export function aplicarUsuariosDoPeriodoNosTotais<T extends { users: number }>(totais: T, usuarios: UsuariosDoPeriodo | null): T {
+  return usuarios ? { ...totais, users: usuarios.total } : totais;
+}
+
+/** Mesma troca, por dispositivo — dispositivo que o GA4 não devolveu fica com a soma dos dias. */
+export function aplicarUsuariosDoPeriodoNosDispositivos<T extends { device: string; users: number }>(
+  dispositivos: T[],
+  usuarios: UsuariosDoPeriodo | null
+): T[] {
+  if (!usuarios) return dispositivos;
+  return dispositivos.map((dispositivo) => ({ ...dispositivo, users: usuarios.porDispositivo[dispositivo.device] ?? dispositivo.users }));
+}
+
 const LIMITE_PAGINAS = 10;
 
 /** Top páginas por sessões e sessões por dispositivo, derivados das mesmas linhas de analytics_sessions_daily. */
@@ -483,6 +532,8 @@ export interface JornadaDoLead {
   totalLeads: number;
   caminhos: CaminhoLead[];
   origens: ItemDistribuicao[];
+  /** Origem/mídia de TODOS os cadastros do GA4 no período, sem filtro por formulário (chave desligada). */
+  origensTodas: ItemDistribuicao[];
   idade: ItemDistribuicao[];
   genero: ItemDistribuicao[];
   local: ItemDistribuicao[];
@@ -493,12 +544,15 @@ export interface JornadaDoLead {
   /** Fração de leads de usuários novos (1ª visita no dia do lead ou sem visita anterior); null sem dado. */
   fracaoNovos: number | null;
   temDados: boolean;
+  /** true = a tabela Origem/mídia mostra só os cadastros dos formulários (com link) das contas selecionadas; false = todos os do GA4. */
+  origensFiltradasPorFormulario: boolean;
 }
 
 export const JORNADA_VAZIA: JornadaDoLead = {
   totalLeads: 0,
   caminhos: [],
   origens: [],
+  origensTodas: [],
   idade: [],
   genero: [],
   local: [],
@@ -507,6 +561,7 @@ export const JORNADA_VAZIA: JornadaDoLead = {
   faixasTempo: [],
   fracaoNovos: null,
   temDados: false,
+  origensFiltradasPorFormulario: false,
 };
 
 const NAO_IDENTIFICADO = '(não identificado)';
@@ -598,6 +653,7 @@ export function agruparJornadaDoLead(linhas: LinhaDetalhamentoLead[]): JornadaDo
     totalLeads,
     caminhos,
     origens: origens.slice(0, 8),
+    origensTodas: origens.slice(0, 8),
     idade,
     genero,
     local: local.slice(0, 8),
@@ -606,5 +662,6 @@ export function agruparJornadaDoLead(linhas: LinhaDetalhamentoLead[]): JornadaDo
     faixasTempo,
     fracaoNovos: totalRetorno > 0 ? novos / totalRetorno : null,
     temDados: true,
+    origensFiltradasPorFormulario: false,
   };
 }

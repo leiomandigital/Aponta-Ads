@@ -95,7 +95,9 @@ const estilos = StyleSheet.create({
     borderBottomColor: COR_MARCA,
     paddingBottom: 10,
   },
-  logo: { width: 56, height: 56, objectFit: 'contain' },
+  // Altura fixa de 56 (a que define a altura do cabeçalho) e largura maior: logos são em geral horizontais e,
+  // numa caixa quadrada, ficavam pequenas. A imagem encosta no canto inferior direito, alinhada ao título.
+  logo: { width: 190, height: 56, objectFit: 'contain', objectPositionX: '100%', objectPositionY: '100%' },
   titulo: { fontSize: 16, fontWeight: 800, color: COR_MARCA },
   subtitulo: { fontSize: 9, color: '#52514e', marginTop: 4 },
   secao: { marginBottom: 20 },
@@ -110,6 +112,7 @@ const estilos = StyleSheet.create({
   cardComparacao: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
   cardComparacaoTexto: { fontSize: 7, marginLeft: 3 },
   graficos: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4, marginBottom: 4 },
+  notaTabela: { fontSize: 7, color: '#898781', marginTop: 4 },
   tabelaTitulo: { fontSize: 10, fontWeight: 700, marginTop: 10, marginBottom: 6 },
   tituloComIcones: { flexDirection: 'row', alignItems: 'center' },
   tituloIcone: { marginLeft: 4 },
@@ -293,6 +296,8 @@ interface ReportDocumentProps {
   jornadaDoLead?: JornadaDoLead;
   distribuicaoLeads?: DistribuicaoDeLeads;
   linksFormularios?: Record<string, string>;
+  /** Estado da chave da tabela Origem/mídia no dashboard (padrão ligada). */
+  origemPorFormulario?: boolean;
 }
 
 const SEM_DADOS = '—';
@@ -329,6 +334,7 @@ export function ReportDocument({
   jornadaDoLead,
   distribuicaoLeads,
   linksFormularios = {},
+  origemPorFormulario = true,
 }: ReportDocumentProps) {
   const nome = nomeDoSistema?.trim() || 'ApontaAds';
   const tituloAba = ROTULO_ABA[aba] ?? aba;
@@ -550,7 +556,17 @@ export function ReportDocument({
         return (
           <View key={secao} style={estilos.secao}>
             <CabecalhoTabela titulo="Origem/mídia" colunas={[{ rotulo: 'Origem/mídia', flex: 3 }, { rotulo: 'Cadastro', flex: 1 }]} plataformas={['ga4']} />
-            <LinhasTabela flex={[3, 1]} linhas={(jornada?.origens ?? []).map((item) => [item.rotulo, formatarNumero(item.total)])} />
+            <LinhasTabela
+              flex={[3, 1]}
+              linhas={((origemPorFormulario ? jornada?.origens : jornada?.origensTodas) ?? []).map((item) => [item.rotulo, formatarNumero(item.total)])}
+            />
+            <Text style={estilos.notaTabela}>
+              {!origemPorFormulario
+                ? 'Todos os cadastros do GA4, de todas as contas, sem filtro por formulário.'
+                : jornada?.origensFiltradasPorFormulario
+                  ? 'Só os cadastros dos formulários (com link cadastrado) das contas selecionadas.'
+                  : 'Todos os cadastros do GA4, sem filtro por conta.'}
+            </Text>
           </View>
         );
       case 'comparativo_plataformas':
@@ -592,7 +608,7 @@ export function ReportDocument({
           <View key={secao} style={estilos.secao}>
             <CabecalhoTabela
               titulo="Sessões por dispositivo"
-              colunas={[{ rotulo: 'Dispositivo', flex: 2 }, { rotulo: 'Sessões' }, { rotulo: 'Usuários' }, { rotulo: 'Leads' }]}
+              colunas={[{ rotulo: 'Dispositivo', flex: 2 }, { rotulo: 'Sessões' }, { rotulo: 'Usuários' }, { rotulo: 'Cadastros' }]}
               plataformas={['ga4']}
             />
             <LinhasTabela

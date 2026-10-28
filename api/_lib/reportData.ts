@@ -202,6 +202,13 @@ export async function buscarCampanhas(supabaseAdmin: SupabaseClient, filtros: Fi
     .slice(0, 20);
 }
 
+/** Contas desativadas — a visão "todas as contas" não soma o que é delas (calculado no servidor, nunca recebido do cliente). */
+export async function buscarIdsContasInativas(supabaseAdmin: SupabaseClient): Promise<string[]> {
+  const { data, error } = await supabaseAdmin.from('accounts').select('id').eq('is_active', false);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((conta) => conta.id as string);
+}
+
 export async function buscarConfiguracoesDeMarca(supabaseAdmin: SupabaseClient): Promise<DashboardSettings | null> {
   const { data, error } = await supabaseAdmin.from('dashboard_settings').select('*').limit(1).maybeSingle();
   if (error) throw new Error(error.message);

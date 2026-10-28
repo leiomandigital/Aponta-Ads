@@ -6,6 +6,8 @@ export interface ParametrosExportacaoPdf {
   accountIds?: string[];
   /** Só para exibição no diálogo/cabeçalho do PDF — o filtro de verdade é accountIds. */
   accountName?: string;
+  /** Estado da chave da tabela Origem/mídia: true (padrão) = só formulários das contas; false = todos os cadastros do GA4. */
+  origemPorFormulario?: boolean;
   dataInicio: string;
   dataFim: string;
 }

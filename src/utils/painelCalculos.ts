@@ -9,13 +9,17 @@ import {
   agruparMidiaPorPlataforma,
   agruparSessoesPorPaginaEDispositivo,
   aplicarCustoTotalNasMetricas,
+  aplicarUsuariosDoPeriodoNosDispositivos,
+  aplicarUsuariosDoPeriodoNosTotais,
   calcularDetalhamentoDeCusto,
   calcularMetricasAgregadas,
   compararComPeriodoAnterior,
   compararMetricasAgregadas,
   somarTotaisAnalytics,
+  valorDoLancamento,
   type ComparacaoMetricasAgregadas,
   type ComparacaoPeriodo,
+  type UsuariosDoPeriodo,
 } from './metricsAggregation.js';
 
 export interface LinhaMidiaBruta {
@@ -27,6 +31,8 @@ export interface LinhaMidiaBruta {
   adset_name: string | null;
   ad_id: string | null;
   ad_name: string | null;
+  /** Conta da linha — para o adicional percentual de uma conta incidir só sobre o custo dela. */
+  account_id?: string | null;
   impressions: number;
   clicks: number;
   cost: number;
@@ -34,6 +40,8 @@ export interface LinhaMidiaBruta {
 }
 
 export interface CampanhaLinha {
+  /** Conta da campanha. */
+  account_id?: string | null;
   campaign_id: string;
   campaign_name: string | null;
   platform: string;
@@ -102,6 +110,7 @@ export function calcularPainelDeMidia({
     campaign_id: linha.campaign_id,
     campaign_name: linha.campaign_name,
     platform: linha.platform,
+    account_id: linha.account_id ?? null,
   })) as unknown as CampanhaLinha[];
 
   // Custo adicional sem campanha (campaign_id nulo) é dividido igualmente entre as campanhas da
@@ -109,9 +118,12 @@ export function calcularPainelDeMidia({
   // com o card e CPM/CPC/custo por conversão ficam sobre o custo total.
   const campanhasPorPlataforma = new Map<string, number>();
   for (const linha of linhasDeCampanha) campanhasPorPlataforma.set(linha.platform, (campanhasPorPlataforma.get(linha.platform) ?? 0) + 1);
+  // Só valores em R$ são divididos igualmente; adicional percentual incide sobre o custo com taxas de CADA campanha
+  // (a soma das campanhas dá o mesmo que o percentual sobre o total da plataforma).
   const avulsoSemCampanhaPorPlataforma = new Map<string, number>();
+  const percentuaisSemCampanha = lancamentosAtual.filter((entrada) => !entrada.campaign_id && entrada.kind === 'porcentagem');
   for (const entrada of lancamentosAtual) {
-    if (entrada.campaign_id) continue;
+    if (entrada.campaign_id || entrada.kind === 'porcentagem') continue;
     avulsoSemCampanhaPorPlataforma.set(entrada.platform, (avulsoSemCampanhaPorPlataforma.get(entrada.platform) ?? 0) + entrada.amount);
   }
 
@@ -120,9 +132,13 @@ export function calcularPainelDeMidia({
       const entradasDaCampanha = lancamentosAtual.filter(
         (entrada) => entrada.platform === linha.platform && entrada.campaign_id === linha.campaign_id
       );
-      const detalhamento = calcularDetalhamentoDeCusto([{ platform: linha.platform, cost: linha.cost }], entradasDaCampanha);
+      const linhaDaCampanha = { platform: linha.platform, cost: linha.cost, account_id: linha.account_id ?? null };
+      const detalhamento = calcularDetalhamentoDeCusto([linhaDaCampanha], entradasDaCampanha);
       const parteDoAvulso = (avulsoSemCampanhaPorPlataforma.get(linha.platform) ?? 0) / (campanhasPorPlataforma.get(linha.platform) ?? 1);
-      const costTotal = detalhamento.costTotal + parteDoAvulso;
+      const parteDosPercentuais = percentuaisSemCampanha
+        .filter((entrada) => entrada.platform === linha.platform)
+        .reduce((soma, entrada) => soma + valorDoLancamento(entrada, [linhaDaCampanha]), 0);
+      const costTotal = detalhamento.costTotal + parteDoAvulso + parteDosPercentuais;
       return { ...aplicarCustoTotalNasMetricas(linha, costTotal), costComTaxas: detalhamento.costComTaxas, costTotal };
     })
     .sort((a, b) => b.cost - a.cost);
@@ -148,10 +164,17 @@ interface LinhaAnalyticsBruta {
   device: string | null;
 }
 
-/** Totais, comparação, série diária e sessões por dispositivo do GA4 — derivados das mesmas linhas. */
-export function calcularPainelDeAnalytics(linhasAtual: LinhaAnalyticsBruta[], linhasAnterior: LinhaAnalyticsBruta[]) {
-  const metricasAnalytics = somarTotaisAnalytics(linhasAtual);
-  const metricasAnalyticsAnterior = somarTotaisAnalytics(linhasAnterior);
+/**
+ * Totais, comparação, série diária e sessões por dispositivo do GA4 — derivados das mesmas linhas. `usuarios` troca a
+ * soma dos usuários de cada dia pelos usuários únicos do período (ver aplicarUsuariosDoPeriodoNosTotais).
+ */
+export function calcularPainelDeAnalytics(
+  linhasAtual: LinhaAnalyticsBruta[],
+  linhasAnterior: LinhaAnalyticsBruta[],
+  usuarios?: { atual: UsuariosDoPeriodo | null; anterior: UsuariosDoPeriodo | null }
+) {
+  const metricasAnalytics = aplicarUsuariosDoPeriodoNosTotais(somarTotaisAnalytics(linhasAtual), usuarios?.atual ?? null);
+  const metricasAnalyticsAnterior = aplicarUsuariosDoPeriodoNosTotais(somarTotaisAnalytics(linhasAnterior), usuarios?.anterior ?? null);
   return {
     metricasAnalytics,
     comparacaoAnalytics: {
@@ -160,7 +183,7 @@ export function calcularPainelDeAnalytics(linhasAtual: LinhaAnalyticsBruta[], li
       leads: compararComPeriodoAnterior(metricasAnalytics.leads, metricasAnalyticsAnterior.leads),
     },
     serieTemporalAnalytics: agruparAnalyticsPorDia(linhasAtual),
-    dispositivos: agruparSessoesPorPaginaEDispositivo(linhasAtual).dispositivos,
+    dispositivos: aplicarUsuariosDoPeriodoNosDispositivos(agruparSessoesPorPaginaEDispositivo(linhasAtual).dispositivos, usuarios?.atual ?? null),
   };
 }
 
@@ -220,13 +243,19 @@ export function calcularSerieCustoPorConversao(
 ): PontoCustoPorConversao[] {
   const midiaPorDia = new Map<string, LinhaMidiaBruta[]>();
   for (const linha of linhasMidia) midiaPorDia.set(linha.date, [...(midiaPorDia.get(linha.date) ?? []), linha]);
+  // Valores em R$ entram no dia do lançamento; percentuais incidem sobre o custo de todos os dias do período
+  // (o lançamento já vem filtrado pelo período), para a soma dos dias bater com o total do período.
   const avulsosPorDia = new Map<string, CampaignCostEntry[]>();
-  for (const entrada of lancamentos) avulsosPorDia.set(entrada.date, [...(avulsosPorDia.get(entrada.date) ?? []), entrada]);
+  for (const entrada of lancamentos) {
+    if (entrada.kind === 'porcentagem') continue;
+    avulsosPorDia.set(entrada.date, [...(avulsosPorDia.get(entrada.date) ?? []), entrada]);
+  }
+  const percentuais = lancamentos.filter((entrada) => entrada.kind === 'porcentagem');
 
   return diasDoPeriodo(dataInicio, dataFim).map((date) => {
     const linhasDoDia = midiaPorDia.get(date) ?? [];
     const conversions = linhasDoDia.reduce((soma, linha) => soma + linha.conversions, 0);
-    const custoTotal = calcularDetalhamentoDeCusto(linhasDoDia, avulsosPorDia.get(date) ?? []).costTotal;
+    const custoTotal = calcularDetalhamentoDeCusto(linhasDoDia, [...(avulsosPorDia.get(date) ?? []), ...percentuais]).costTotal;
     return { date, cost_per_conversion: conversions > 0 ? custoTotal / conversions : null, conversions };
   });
 }
@@ -255,14 +284,20 @@ export function calcularSerieCustoPorLead(
 
   const midiaPorDia = new Map<string, LinhaMidiaBruta[]>();
   for (const linha of linhasMidia) midiaPorDia.set(linha.date, [...(midiaPorDia.get(linha.date) ?? []), linha]);
+  // Valores em R$ entram no dia do lançamento; percentuais incidem sobre o custo de todos os dias do período
+  // (o lançamento já vem filtrado pelo período), para a soma dos dias bater com o total do período.
   const avulsosPorDia = new Map<string, CampaignCostEntry[]>();
-  for (const entrada of lancamentos) avulsosPorDia.set(entrada.date, [...(avulsosPorDia.get(entrada.date) ?? []), entrada]);
+  for (const entrada of lancamentos) {
+    if (entrada.kind === 'porcentagem') continue;
+    avulsosPorDia.set(entrada.date, [...(avulsosPorDia.get(entrada.date) ?? []), entrada]);
+  }
+  const percentuais = lancamentos.filter((entrada) => entrada.kind === 'porcentagem');
 
   return diasDoPeriodo(dataInicio, dataFim).map((date) => {
     const leads = leadsPorDia.get(date) ?? 0;
     return {
       date,
-      cost_per_lead: leads > 0 ? calcularDetalhamentoDeCusto(midiaPorDia.get(date) ?? [], avulsosPorDia.get(date) ?? []).costTotal / leads : null,
+      cost_per_lead: leads > 0 ? calcularDetalhamentoDeCusto(midiaPorDia.get(date) ?? [], [...(avulsosPorDia.get(date) ?? []), ...percentuais]).costTotal / leads : null,
       leads,
     };
   });
